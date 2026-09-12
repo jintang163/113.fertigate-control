@@ -1,0 +1,106 @@
+:root {
+  --app-header-bg: #00152f;
+  --app-sider-bg: #00152f;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+  background: #f0f2f5;
+}
+
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 64px;
+  padding: 0 20px;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app-logo .logo-mark {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.app-logo .logo-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: #fff !important;
+  box-shadow: 0 1px 4px rgba(0, 21, 47, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #00152f;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.gateway-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #555;
+}
+
+.page-container {
+  padding: 16px;
+}
+
+.stat-card .anticon {
+  color: #1677ff;
+}
+
+.chart-card .ant-card-head-title {
+  font-weight: 600;
+}
+
+.moisture-bar .ant-progress-text {
+  font-size: 12px;
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 4px 0 12px;
+  color: #00152f;
+}
+
+.field-card-meta {
+  color: #888;
+  font-size: 13px;
+}
+
+.compact-empty {
+  padding: 24px 0;
+}

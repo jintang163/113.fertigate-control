@@ -1,0 +1,70 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  application:
+    name: cloud-backend
+  datasource:
+    url: jdbc:postgresql://${PG_HOST:postgres}:${PG_PORT:5432}/${PG_DB:farm}
+    username: ${PG_USER:farm}
+    password: ${PG_PASSWORD:farm}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 10000
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+
+mqtt:
+  host: ${MQTT_HOST:tcp://emqx:1883}
+  client-id: ${MQTT_CLIENT_ID:cloud-backend}
+  username: ${MQTT_USERNAME:}
+  password: ${MQTT_PASSWORD:}
+  keep-alive-sec: 30
+  connection-timeout-sec: 10
+  topics:
+    telemetry: farm/+/telemetry
+    valve-status: farm/+/valve/status
+    events: farm/+/events
+    health: farm/+/health
+
+influx:
+  url: ${INFLUX_URL:http://influxdb:8086}
+  token: ${INFLUX_TOKEN:my-super-admin-token}
+  org: ${INFLUX_ORG:farm}
+  bucket: ${INFLUX_BUCKET:telemetry}
+  ensure-bucket: ${INFLUX_ENSURE_BUCKET:true}
+
+decision:
+  url: ${DECISION_URL:http://decision-service:8000}
+  timeout-ms: 5000
+
+app:
+  control:
+    # 自动评估周期，默认 5 分钟；也可用 evaluate-cron 指定 cron（设置后 interval 失效）
+    evaluate-interval-ms: ${CONTROL_EVAL_INTERVAL_MS:300000}
+    evaluate-cron: ${CONTROL_EVAL_CRON:}
+    # STARTING 命令确认超时 / 重试后最终超时
+    command-ack-timeout-ms: ${COMMAND_ACK_TIMEOUT_MS:30000}
+    command-final-timeout-ms: ${COMMAND_FINAL_TIMEOUT_MS:60000}
+    # 遥测数据有效期
+    staleness-sec: ${DATA_STALENESS_SEC:600}
+    # 默认纬度（无气象/预报服务时）
+    latitude: ${FARM_LATITUDE:34.5}
+
+logging:
+  level:
+    com.farm.irrigation: INFO

@@ -39,3 +39,14 @@ minio-data/
 
 # WeChat Mini Program
 miniprogram_npm/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Edge gateway runtime data (SQLite outbox)
+edge-gateway/data/
+

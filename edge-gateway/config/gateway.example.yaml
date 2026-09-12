@@ -1,0 +1,81 @@
+# 边缘网关示例配置（环境变量 GW_CONFIG 指定路径，默认 ./config/gateway.yaml）
+gatewaySn: GW001
+
+mqtt:
+  host: ${MQTT_HOST:emqx}          # 无 broker 时用 --simulate-stdio 仍可本地演练
+  port: 1883
+  username: ""
+  password: ""
+  keepaliveSec: 30
+
+pollIntervalSec: 10
+healthIntervalSec: 60
+outboxBatch: 50
+
+# 本地联锁默认参数（可被云端 config 下发覆盖）
+interlocks:
+  moistureHardMax: 33.0
+  moistureHardMin: 8.0
+  sensorLostSec: 180
+  ecHigh: 3.0
+  phLow: 5.0
+  phHigh: 8.0
+
+# Modbus-RTU 总线（真实硬件）
+modbus:
+  serialPort: /dev/ttyS4
+  baudrate: 9600
+  bytesize: 8
+  parity: N
+  stopbits: 1
+  timeoutSec: 1
+
+# 无硬件时设 mode: simulate（或启动参数 --simulate）
+mode: simulate
+
+simulate:
+  timeScale: 30           # 仿真时间倍速（演示加速蒸散/灌溉响应；每10s步长约0.2m³）
+  areaM2: 2000
+  wetRatio: 0.8
+  wettedDepthMm: 300
+  emitterTotalLph: 2400
+  weather:
+    latitude: 34.5
+
+devices:
+  - code: SOIL-A1
+    kind: soil
+    modbusAddr: 1
+    linkedValve: V-01
+    sim:
+      initialMoisture: 21.0
+      thetaFc: 30.0
+      thetaWp: 12.0
+      etcMmDay: 5.0
+      ec: 1.65
+      ph: 6.4
+  - code: SOIL-A2
+    kind: soil
+    modbusAddr: 2
+    linkedValve: V-01
+    sim:
+      initialMoisture: 23.5
+      thetaFc: 31.0
+      thetaWp: 13.0
+      etcMmDay: 4.6
+      ec: 1.55
+      ph: 6.5
+  - code: WS-01
+    kind: weather
+    modbusAddr: 3
+  - code: V-01
+    kind: valve
+    modbusAddr: 4
+    sensorCode: SOIL-A1       # 本地联锁取数点
+  - code: FM-01
+    kind: flow
+    modbusAddr: 5
+    linkedValve: V-01
+
+sqlite:
+  path: data/gateway-outbox.db
