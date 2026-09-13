@@ -44,6 +44,9 @@ public class LocalDecisionCalculator {
         double thetaTarget = round(fc - 1.0, 2); // drip: stop slightly below FC to avoid deep percolation
         r.setThetaStart(thetaStart);
         r.setThetaTarget(thetaTarget);
+        if (!Double.isNaN(now)) {
+            r.setMoisture(round(now, 2));
+        }
 
         double hardMax = DecisionClient.hardMax(cfg);
         if (now >= hardMax || snap.getEc() != null && outOfWindow(snap.getEc(), cfg.getEcMin(), cfg.getEcMax())

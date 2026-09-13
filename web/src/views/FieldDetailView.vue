@@ -1,17 +1,31 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message, Modal } from 'ant-design-vue'
+import { message, Modal, Empty } from 'ant-design-vue'
+import dayjs from 'dayjs'
 import {
+  addStageRecord,
+  deleteStageRecord,
   evaluateDecision,
+  getDevices,
   getFieldStatus,
   getFields,
   getJobs,
+  getStageRecords,
   getTelemetry,
   sendControl,
   updateField
 } from '@/api'
-import type { Decision, Field, FieldConfig, FieldStatus, Job, TelemetryDTO } from '@/types'
+import type {
+  Decision,
+  Device,
+  Field,
+  FieldConfig,
+  FieldStatus,
+  Job,
+  StageRecord,
+  TelemetryDTO
+} from '@/types'
 import { formatDuration, formatNum, formatPercent, formatTime, formatVolume } from '@/utils/format'
 import { DECISION_COLOR, DECISION_TEXT, valveColor, valveText } from '@/utils/labels'
 import MoistureChart from '@/components/MoistureChart.vue'
@@ -94,6 +108,7 @@ const configForm = reactive<FieldConfig>({
   mode: 'AUTO',
   hardMaxOffsetPct: 3,
   hardMin: 8,
+  moistureLowerPct: 14,
   maxDurationSec: 900,
   minIntervalH: 0.5,
   ecMin: 1.2,
@@ -103,9 +118,141 @@ const configForm = reactive<FieldConfig>({
   rainSkipMm: 5,
   wetRatio: 0.8,
   efficiency: 0.9,
-  enabled: true
+  enabled: true,
+  weatherLinked: false,
+  windMaxMs: 6,
+  tempMin: 5,
+  tempMax: 38,
+  humidityMin: 30,
+  rainTodaySkipMm: 5,
+  forecastSkipMm: 10,
+  forecastDays: 3,
+  pressureMinKpa: 80,
+  flowMinM3h: 0.5,
+  waterLostDelaySec: 15,
+  pumpOverloadA: 8
 })
 const configSaving = ref(false)
+
+// ---- 灌区基础信息（作物品种/优先级/注肥泵/注肥比/灌溉时窗） ----
+const baseSaving = ref(false)
+const baseForm = reactive({
+  cropVariety: '',
+  priority: 100,
+  fertPumpCode: undefined as string | undefined,
+  injectRatioPct: 0,
+  windowStartMin: null as number | null,
+  windowEndMin: null as number | null
+})
+const devices = ref<Device[]>([])
+const pumpOptions = computed(() => devices.value.filter((d) => d.type === 'FERT_PUMP'))
+
+function syncBaseForm() {
+  if (!field.value) return
+  baseForm.cropVariety = field.value.cropVariety ?? ''
+  baseForm.priority = field.value.priority ?? 100
+  baseForm.fertPumpCode = field.value.fertPumpCode ?? undefined
+  baseForm.injectRatioPct = field.value.injectRatioPct ?? 0
+  baseForm.windowStartMin = field.value.windowStartMin ?? null
+  baseForm.windowEndMin = field.value.windowEndMin ?? null
+}
+
+async function onSaveBase() {
+  if (!field.value) return
+  baseSaving.value = true
+  try {
+    await updateField(fieldId, {
+      ...field.value,
+      cropVariety: baseForm.cropVariety,
+      priority: baseForm.priority,
+      fertPumpCode: baseForm.fertPumpCode,
+      injectRatioPct: baseForm.injectRatioPct,
+      windowStartMin: baseForm.windowStartMin,
+      windowEndMin: baseForm.windowEndMin
+    })
+    message.success('灌区信息已保存')
+    await loadBase()
+  } finally {
+    baseSaving.value = false
+  }
+}
+
+// ---- 生育期记录 ----
+const stages = ref<StageRecord[]>([])
+const stageSaving = ref(false)
+const stageDate = ref(dayjs().format('YYYY-MM-DD'))
+const stageForm = reactive({
+  stageCode: 'initial',
+  stageName: '',
+  note: '',
+  operator: ''
+})
+const STAGE_OPTIONS = [
+  { value: 'initial', label: '苗期 initial' },
+  { value: 'development', label: '发育期 development' },
+  { value: 'mid', label: '中期 mid' },
+  { value: 'late', label: '后期 late' }
+]
+const simpleImage = Empty.PRESENTED_IMAGE_SIMPLE
+const todayStr = dayjs().format('YYYY-MM-DD')
+
+function stageLabel(code: string) {
+  return STAGE_OPTIONS.find((s) => s.value === code)?.label ?? code
+}
+
+function minToHHmm(v: number | null | undefined) {
+  if (v == null) return undefined
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`
+}
+function hhmmToMin(v?: string) {
+  if (!v) return null
+  const [h, m] = v.split(':').map(Number)
+  return h * 60 + m
+}
+const windowStart = computed({
+  get: () => minToHHmm(baseForm.windowStartMin),
+  set: (v?: string) => { baseForm.windowStartMin = hhmmToMin(v) }
+})
+const windowEnd = computed({
+  get: () => minToHHmm(baseForm.windowEndMin),
+  set: (v?: string) => { baseForm.windowEndMin = hhmmToMin(v) }
+})
+
+async function loadStages() {
+  stages.value = await getStageRecords(fieldId).catch(() => [])
+}
+
+async function onAddStage() {
+  stageSaving.value = true
+  try {
+    await addStageRecord(fieldId, {
+      stageCode: stageForm.stageCode,
+      stageName: STAGE_OPTIONS.find((s) => s.value === stageForm.stageCode)?.label,
+      recordDate: stageDate.value,
+      note: stageForm.note,
+      operator: stageForm.operator
+    })
+    message.success('生育期已记录')
+    stageForm.note = ''
+    await loadStages()
+  } finally {
+    stageSaving.value = false
+  }
+}
+
+async function onRemoveStage(r: StageRecord) {
+  if (r.id == null) return
+  await deleteStageRecord(fieldId, r.id)
+  message.success('记录已删除')
+  await loadStages()
+}
+
+function minToText(v: number | null | undefined) {
+  if (v == null) return '不限'
+  const h = Math.floor(v / 60)
+  const m = v % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
 
 function syncConfigForm() {
   if (!field.value) return
@@ -115,11 +262,16 @@ function syncConfigForm() {
 async function loadBase() {
   loading.value = true
   try {
-    const fs = await getFields().catch(() => [])
+    const [fs, ds] = await Promise.all([
+      getFields().catch(() => []),
+      getDevices().catch(() => [] as Device[])
+    ])
+    devices.value = ds
     field.value = fs.find((x) => x.id === fieldId) || null
     if (!field.value) return
     syncConfigForm()
-    await refreshStatus()
+    syncBaseForm()
+    await Promise.all([refreshStatus(), loadStages()])
   } finally {
     loading.value = false
   }
@@ -488,8 +640,93 @@ onUnmounted(() => {
       </template>
     </a-card>
 
+    <!-- 灌区基础信息（品种/优先级/注肥泵/时窗） -->
+    <a-card v-if="field" title="灌区信息（作物品种 / 轮灌优先级 / 施肥泵 / 灌溉时窗）" style="margin-top: 16px" size="small">
+      <a-form layout="vertical">
+        <a-row :gutter="16">
+          <a-col :span="6">
+            <a-form-item label="作物品种">
+              <a-input v-model:value="baseForm.cropVariety" placeholder="如 金棚一号" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="轮灌优先级（小者优先）">
+              <a-input-number v-model:value="baseForm.priority" :min="1" :max="9999" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="比例注肥泵">
+              <a-select v-model:value="baseForm.fertPumpCode" allow-clear placeholder="无（仅灌水）">
+                <a-select-option v-for="p in pumpOptions" :key="p.code" :value="p.code">
+                  {{ p.name || p.code }}{{ p.online ? '' : '（离线）' }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="注肥比例（体积 %）">
+              <a-input-number v-model:value="baseForm.injectRatioPct" :min="0" :max="20" :step="0.1"
+                addon-after="%" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item :label="`允许时窗起（${minToText(baseForm.windowStartMin)}）`">
+              <a-time-picker v-model:value="windowStart" format="HH:mm" value-format="HH:mm"
+                placeholder="不限制" allow-clear style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item :label="`允许时窗止（${minToText(baseForm.windowEndMin)}）`">
+              <a-time-picker v-model:value="windowEnd" format="HH:mm" value-format="HH:mm"
+                placeholder="不限制" allow-clear style="width: 100%" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+        <a-button type="primary" :loading="baseSaving" @click="onSaveBase">保存灌区信息</a-button>
+      </a-form>
+    </a-card>
+
+    <!-- 作物生育期记录 -->
+    <a-card v-if="field" title="作物生育期记录" style="margin-top: 16px" size="small">
+      <a-row :gutter="16">
+        <a-col :span="14">
+          <a-timeline>
+            <a-timeline-item v-for="s in stages" :key="s.id" :color="s.recordDate <= todayStr ? 'green' : 'gray'">
+              <a-space>
+                <strong>{{ stageLabel(s.stageCode) }}</strong>
+                <span>{{ s.recordDate }}</span>
+                <a-tag v-if="s.operator" color="default">{{ s.operator }}</a-tag>
+                <a-popconfirm title="删除该记录？" @confirm="onRemoveStage(s)">
+                  <a-button type="link" size="small" danger>删除</a-button>
+                </a-popconfirm>
+              </a-space>
+              <div v-if="s.note" style="color: #888; font-size: 12px">{{ s.note }}</div>
+            </a-timeline-item>
+            <a-empty v-if="!stages.length" :image="simpleImage" description="暂无生育期记录（默认按播期+作物模型推导当前生育期）" />
+          </a-timeline>
+        </a-col>
+        <a-col :span="10">
+          <a-form layout="vertical">
+            <a-form-item label="生育期">
+              <a-select v-model:value="stageForm.stageCode" :options="STAGE_OPTIONS" />
+            </a-form-item>
+            <a-form-item label="起始日期">
+              <a-date-picker v-model:value="stageDate" value-format="YYYY-MM-DD" style="width: 100%" />
+            </a-form-item>
+            <a-form-item label="操作人">
+              <a-input v-model:value="stageForm.operator" placeholder="农艺师姓名" />
+            </a-form-item>
+            <a-form-item label="备注">
+              <a-textarea v-model:value="stageForm.note" :rows="2" placeholder="如 定植、始花期、坐果期…" />
+            </a-form-item>
+            <a-button type="primary" :loading="stageSaving" @click="onAddStage">登记生育期</a-button>
+          </a-form>
+        </a-col>
+      </a-row>
+    </a-card>
+
     <!-- 阈值/配置表单 -->
-    <a-card v-if="field" title="阈值与灌溉配置（FieldConfig）" style="margin-top: 16px" size="small">
+    <a-card v-if="field" title="阈值策略与安全联锁配置（FieldConfig）" style="margin-top: 16px" size="small">
       <a-form :model="configForm" layout="vertical">
         <a-row :gutter="16">
           <a-col :span="6">
@@ -560,6 +797,79 @@ onUnmounted(() => {
           <a-col :span="6">
             <a-form-item label="启用自动评估 enabled">
               <a-switch v-model:checked="configForm.enabled" checked-children="启用" un-checked-children="停用" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="土壤湿度下限 moistureLowerPct（旱情告警 %）">
+              <a-input-number v-model:value="configForm.moistureLowerPct" :min="0" :max="100" :step="0.5" addon-after="%" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+
+        <a-divider orientation="left" plain style="font-size: 13px">气象联动条件（仅自动模式）</a-divider>
+        <a-row :gutter="16">
+          <a-col :span="6">
+            <a-form-item label="启用气象联动">
+              <a-switch v-model:checked="configForm.weatherLinked" checked-children="开" un-checked-children="关" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="风速上限（m/s）">
+              <a-input-number v-model:value="configForm.windMaxMs" :min="0" :step="0.5" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="气温下限（℃）">
+              <a-input-number v-model:value="configForm.tempMin" :step="0.5" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="气温上限（℃）">
+              <a-input-number v-model:value="configForm.tempMax" :step="0.5" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="空气湿度下限（%）">
+              <a-input-number v-model:value="configForm.humidityMin" :min="0" :max="100" addon-after="%" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="当日降雨跳过（mm）">
+              <a-input-number v-model:value="configForm.rainTodaySkipMm" :min="0" :step="1" addon-after="mm" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="预报降雨跳过（mm）">
+              <a-input-number v-model:value="configForm.forecastSkipMm" :min="0" :step="1" addon-after="mm" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="预报天数">
+              <a-input-number v-model:value="configForm.forecastDays" :min="1" :max="7" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+        </a-row>
+
+        <a-divider orientation="left" plain style="font-size: 13px">安全联锁阈值（云端 + 边缘双重生效）</a-divider>
+        <a-row :gutter="16">
+          <a-col :span="6">
+            <a-form-item label="主管道水压下限（kPa）">
+              <a-input-number v-model:value="configForm.pressureMinKpa" :min="0" :step="5" addon-after="kPa" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="阀开最低瞬时流量（m³/h）">
+              <a-input-number v-model:value="configForm.flowMinM3h" :min="0" :step="0.1" addon-after="m³/h" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="缺水判定延时（秒）">
+              <a-input-number v-model:value="configForm.waterLostDelaySec" :min="1" :step="1" addon-after="秒" style="width: 100%" />
+            </a-form-item>
+          </a-col>
+          <a-col :span="6">
+            <a-form-item label="施肥泵过载电流（A）">
+              <a-input-number v-model:value="configForm.pumpOverloadA" :min="0" :step="0.5" addon-after="A" style="width: 100%" />
             </a-form-item>
           </a-col>
         </a-row>

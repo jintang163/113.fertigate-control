@@ -2,6 +2,7 @@ package com.farm.irrigation.mqtt;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.farm.irrigation.service.DeviceStatusService;
 import com.farm.irrigation.service.EventService;
 import com.farm.irrigation.service.HealthService;
 import com.farm.irrigation.service.TelemetryIngestService;
@@ -22,17 +23,20 @@ public class MqttMessageDispatcher {
     private final ObjectMapper objectMapper;
     private final TelemetryIngestService telemetryIngestService;
     private final ValveStatusService valveStatusService;
+    private final DeviceStatusService deviceStatusService;
     private final EventService eventService;
     private final HealthService healthService;
 
     public MqttMessageDispatcher(ObjectMapper objectMapper,
                                  TelemetryIngestService telemetryIngestService,
                                  ValveStatusService valveStatusService,
+                                 DeviceStatusService deviceStatusService,
                                  EventService eventService,
                                  HealthService healthService) {
         this.objectMapper = objectMapper;
         this.telemetryIngestService = telemetryIngestService;
         this.valveStatusService = valveStatusService;
+        this.deviceStatusService = deviceStatusService;
         this.eventService = eventService;
         this.healthService = healthService;
     }
@@ -56,6 +60,8 @@ public class MqttMessageDispatcher {
                 telemetryIngestService.handleTelemetry(gatewaySn, msg);
             } else if (topic.endsWith("/valve/status")) {
                 valveStatusService.handle(gatewaySn, msg);
+            } else if (topic.endsWith("/device/status")) {
+                deviceStatusService.handle(gatewaySn, msg);
             } else if (topic.endsWith("/events")) {
                 eventService.handle(gatewaySn, msg);
             } else if (topic.endsWith("/health")) {

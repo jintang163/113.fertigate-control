@@ -38,6 +38,21 @@ class WeatherState:
     latitude: float = 34.5
 
 
+@dataclass
+class PressureState:
+    code: str
+    pressure: float = 250.0     # kPa
+    fault: bool = False         # True 时模拟缺水（压力骤降）
+
+
+@dataclass
+class PumpState:
+    code: str
+    opening: int = 0            # 0-100
+    rated_current: float = 4.0  # A
+    fault: bool = False         # True 时模拟电机过载
+
+
 class FieldSimulator:
     """同步式仿真后端：poll() 返回一帧读数，valve set 立刻生效。"""
 
@@ -53,6 +68,8 @@ class FieldSimulator:
         self.weather: Optional[WeatherState] = None
         self.valves: Dict[str, bool] = {}
         self.fault: Dict[str, bool] = {}
+        self.pressures: Dict[str, PressureState] = {}
+        self.pumps: Dict[str, PumpState] = {}
         self._flow_total = 0.0
         self._flow_code: Optional[str] = None
         self._valve_flow_codes: List[str] = []
@@ -77,6 +94,14 @@ class FieldSimulator:
                 self._valve_flow_codes.append(d["code"])
             elif kind == "flow":
                 self._flow_code = d["code"]
+            elif kind == "pressure":
+                s = d.get("sim") or {}
+                self.pressures[d["code"]] = PressureState(
+                    code=d["code"], pressure=float(s.get("initialKpa", 250.0)))
+            elif kind == "pump":
+                s = d.get("sim") or {}
+                self.pumps[d["code"]] = PumpState(
+                    code=d["code"], rated_current=float(s.get("ratedCurrent", 4.0)))
 
         # 多土壤点共用同一阀门时，总流量按点数均分
         self._soil_share: Dict[str, float] = {}
@@ -88,8 +113,29 @@ class FieldSimulator:
     def valve_state(self, code: str) -> str:
         return "OPEN" if self.valves.get(code) else "CLOSED"
 
+    # ---- 施肥泵驱动（开度 0-100） ----
+    def set_pump(self, code: str, opening: int) -> None:
+        p = self.pumps.get(code)
+        if p is not None:
+            p.opening = max(0, min(100, int(opening)))
+
+    def pump_opening(self, code: str) -> int:
+        p = self.pumps.get(code)
+        return p.opening if p else 0
+
     def any_open(self) -> bool:
         return any(self.valves.values())
+
+    # ---- 故障注入（测试/演示） ----
+    def set_pressure_fault(self, code: str, fault: bool) -> None:
+        p = self.pressures.get(code)
+        if p is not None:
+            p.fault = fault
+
+    def set_pump_fault(self, code: str, fault: bool) -> None:
+        p = self.pumps.get(code)
+        if p is not None:
+            p.fault = fault
 
     # ---- 水文推进 ----
     def step(self, dt_sec: float) -> None:
@@ -124,6 +170,11 @@ class FieldSimulator:
         instant = per_valve_m3h * open_count
         self._flow_total += instant * dt_sec / 3600.0
         self._t += dt_sec
+
+        # 主管道水压：阀开正常工作约 250kPa；故障注入时骤降至 40kPa（缺水）
+        for p in self.pressures.values():
+            target = 40.0 if p.fault else (250.0 if open_count else 280.0)
+            p.pressure += (target - p.pressure) * min(1.0, dt_sec / 5.0)
 
     def _air_temp(self) -> float:
         if not self.weather:
@@ -166,6 +217,21 @@ class FieldSimulator:
         for code in self.valves:
             frame[code] = {"kind": "valve", "quality": "GOOD",
                            "values": {"state": self.valve_state(code)}}
+        # 主管道压力
+        for code, p in self.pressures.items():
+            frame[code] = {"kind": "pressure", "quality": "GOOD",
+                           "values": {"pressure": round(p.pressure, 1)}}
+        # 施肥泵：开度/电流（过载故障时电流超限）
+        for code, p in self.pumps.items():
+            opening = p.opening
+            current = p.rated_current * opening / 100.0
+            if p.fault and opening > 0:
+                current = p.rated_current * 2.2
+            frame[code] = {"kind": "pump", "quality": "GOOD", "values": {
+                "opening": opening,
+                "motorCurrent": round(current, 2),
+                "overload": bool(p.fault and opening > 0),
+            }}
         if self._flow_code:
             instant = (self.total_lph / 1000.0) if self.any_open() else 0.0
             frame[self._flow_code] = {"kind": "flow", "quality": "GOOD", "values": {

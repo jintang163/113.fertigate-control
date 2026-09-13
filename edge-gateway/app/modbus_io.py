@@ -7,6 +7,10 @@
   0 气温0.1℃ 1 空气湿度0.1% 2 光照 1W/m² 3 雨量 0.1mm 4 风速0.1m/s
 流量计（03）：
   0 瞬时流量 0.001m³/h（uint32, 占2寄存器） 2 累计流量 0.001m³（uint32, 占2寄存器）
+压力变送器（03）：
+  0 水压 0.1kPa
+施肥泵（03 读 / 06 写保持寄存器）：
+  0 开度 0-100（写） 1 电流 0.1A（读） 线圈1：过载/故障（读）
 电磁阀（DO 线圈，功能码 05/01）：
   线圈0：开闭；离散输入0：到位反馈（可选）
 
@@ -37,6 +41,7 @@ class ModbusBackend:
             timeout=float(serial_cfg.get("timeoutSec", 1)),
         )
         self._valve_addr = {d.code: d.modbusAddr for d in devices if d.kind == "valve"}
+        self._pump_addr = {d.code: d.modbusAddr for d in devices if d.kind == "pump"}
 
     def connect(self) -> bool:
         return self._client.connect()
@@ -82,6 +87,16 @@ class ModbusBackend:
                     state = "OPEN" if (not rr.isError() and rr.bits[0]) else "CLOSED"
                     frame[d.code] = {"kind": "valve", "quality": "GOOD",
                                      "values": {"state": state}}
+                elif d.kind == "pressure":
+                    regs = self._read_hr(d.modbusAddr, 1)
+                    frame[d.code] = {"kind": "pressure", "quality": "GOOD",
+                                     "values": {"pressure": regs[0] / 10.0}}
+                elif d.kind == "pump":
+                    regs = self._read_hr(d.modbusAddr, 2)
+                    frame[d.code] = {"kind": "pump", "quality": "GOOD", "values": {
+                        "opening": int(regs[0]),
+                        "motorCurrent": regs[1] / 10.0,
+                    }}
             except Exception as e:  # 单点故障不拖垮整轮采集
                 log.warning("读取 %s 失败: %s", d.code, e)
                 frame[d.code] = {"kind": d.kind, "quality": "SENSOR_FAULT", "values": {}}
@@ -101,3 +116,13 @@ class ModbusBackend:
         addr = self._valve_addr[code]
         rr = self._client.read_coils(address=0, count=1, slave=addr)
         return "OPEN" if (not rr.isError() and rr.bits[0]) else "CLOSED"
+
+    # ---- 施肥泵驱动（开度 0-100，保持寄存器功能码 06） ----
+    def set_pump(self, code: str, opening: int) -> None:
+        addr = self._pump_addr.get(code)
+        if addr is None:
+            raise KeyError(f"未知施肥泵: {code}")
+        rw = self._client.write_register(address=0, value=int(opening), slave=addr)
+        if rw.isError():
+            raise IOError(f"施肥泵 {code} 写入失败: {rw}")
+        log.info("施肥泵 %s → 开度 %s%%", code, opening)

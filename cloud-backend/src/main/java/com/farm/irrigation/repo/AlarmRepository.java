@@ -18,4 +18,6 @@ public interface AlarmRepository extends JpaRepository<Alarm, Long> {
     long countByLevelAndAcknowledged(String level, boolean acknowledged);
 
     boolean existsByFieldIdAndLevelAndAcknowledged(Long fieldId, String level, boolean acknowledged);
+
+    boolean existsByFieldIdAndLevelAndTypeAndAcknowledged(Long fieldId, String level, String type, boolean acknowledged);
 }

@@ -19,6 +19,8 @@ public class FieldSnapshot {
     private Double airTemp;
     private Double tmax;
     private Double tmin;
+    private Double airHumidity;
+    private Double windSpeed;
     private double rainfallToday;
     private List<Double> rainForecast;
     private Instant weatherTs;
@@ -28,6 +30,16 @@ public class FieldSnapshot {
     private Double totalFlow;
     private String flowDeviceCode;
     private Instant flowTs;
+
+    /** 主管道水压 kPa（缺水联锁） */
+    private Double pressureKpa;
+    private String pressureDeviceCode;
+
+    /** 注肥泵当前状态 */
+    private String pumpState;
+    private Integer pumpOpening;
+    private Double pumpCurrentA;
+    private boolean pumpOverload;
 
     private String valveState;
     private Double valveAppliedVolume;
@@ -60,6 +72,10 @@ public class FieldSnapshot {
     public void setTmax(Double tmax) { this.tmax = tmax; }
     public Double getTmin() { return tmin; }
     public void setTmin(Double tmin) { this.tmin = tmin; }
+    public Double getAirHumidity() { return airHumidity; }
+    public void setAirHumidity(Double airHumidity) { this.airHumidity = airHumidity; }
+    public Double getWindSpeed() { return windSpeed; }
+    public void setWindSpeed(Double windSpeed) { this.windSpeed = windSpeed; }
     public double getRainfallToday() { return rainfallToday; }
     public void setRainfallToday(double rainfallToday) { this.rainfallToday = rainfallToday; }
     public List<Double> getRainForecast() { return rainForecast; }
@@ -74,6 +90,18 @@ public class FieldSnapshot {
     public void setFlowDeviceCode(String flowDeviceCode) { this.flowDeviceCode = flowDeviceCode; }
     public Instant getFlowTs() { return flowTs; }
     public void setFlowTs(Instant flowTs) { this.flowTs = flowTs; }
+    public Double getPressureKpa() { return pressureKpa; }
+    public void setPressureKpa(Double pressureKpa) { this.pressureKpa = pressureKpa; }
+    public String getPressureDeviceCode() { return pressureDeviceCode; }
+    public void setPressureDeviceCode(String pressureDeviceCode) { this.pressureDeviceCode = pressureDeviceCode; }
+    public String getPumpState() { return pumpState; }
+    public void setPumpState(String pumpState) { this.pumpState = pumpState; }
+    public Integer getPumpOpening() { return pumpOpening; }
+    public void setPumpOpening(Integer pumpOpening) { this.pumpOpening = pumpOpening; }
+    public Double getPumpCurrentA() { return pumpCurrentA; }
+    public void setPumpCurrentA(Double pumpCurrentA) { this.pumpCurrentA = pumpCurrentA; }
+    public boolean isPumpOverload() { return pumpOverload; }
+    public void setPumpOverload(boolean pumpOverload) { this.pumpOverload = pumpOverload; }
     public String getValveState() { return valveState; }
     public void setValveState(String valveState) { this.valveState = valveState; }
     public Double getValveAppliedVolume() { return valveAppliedVolume; }

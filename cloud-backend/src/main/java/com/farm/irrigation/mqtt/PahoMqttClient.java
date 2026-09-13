@@ -100,9 +100,10 @@ public class PahoMqttClient implements MqttGateway {
         try {
             client.subscribe(props.getTopics().getTelemetry(), 1);
             client.subscribe(props.getTopics().getValveStatus(), 1);
+            client.subscribe(props.getTopics().getDeviceStatus(), 1);
             client.subscribe(props.getTopics().getEvents(), 1);
             client.subscribe(props.getTopics().getHealth(), 1);
-            log.info("Subscribed to telemetry/valve-status/events/health (QoS1)");
+            log.info("Subscribed to telemetry/valve-status/device-status/events/health (QoS1)");
         } catch (MqttException e) {
             log.error("MQTT subscribe failed: {}", e.getMessage());
         }

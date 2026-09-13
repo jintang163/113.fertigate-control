@@ -45,6 +45,7 @@ class MqttClient:
         self._client.on_message = self._on_message
         self._host, self._port = host, port
         self.on_command: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.on_device_command: Optional[Callable[[Dict[str, Any]], None]] = None
         self.on_config: Optional[Callable[[Dict[str, Any]], None]] = None
         self.connected = threading.Event()
         self._stop = threading.Event()
@@ -67,9 +68,11 @@ class MqttClient:
         return {
             "telemetry": f"farm/{self.gw}/telemetry",
             "valveStatus": f"farm/{self.gw}/valve/status",
+            "deviceStatus": f"farm/{self.gw}/device/status",
             "events": f"farm/{self.gw}/events",
             "health": f"farm/{self.gw}/health",
             "command": f"farm/{self.gw}/valve/command",
+            "deviceCommand": f"farm/{self.gw}/device/command",
             "config": f"farm/{self.gw}/config",
         }
 
@@ -79,6 +82,7 @@ class MqttClient:
             log.info("MQTT 已连接 %s:%s（持久会话 present=%s）",
                      self._host, self._port, getattr(flags, "session_present", "?"))
             client.subscribe(self.topics()["command"], qos=1)
+            client.subscribe(self.topics()["deviceCommand"], qos=1)
             client.subscribe(self.topics()["config"], qos=1)
             self.connected.set()
         else:
@@ -105,6 +109,10 @@ class MqttClient:
             log.info("收到阀控命令: %s", payload.get("commandId"))
             if self.on_command:
                 self.on_command(payload)
+        elif msg.topic.endswith("/device/command"):
+            log.info("收到设备命令: %s %s", payload.get("deviceCode"), payload.get("action"))
+            if self.on_device_command:
+                self.on_device_command(payload)
         elif msg.topic.endswith("/config"):
             log.info("收到配置下发")
             if self.on_config:

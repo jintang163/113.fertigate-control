@@ -19,6 +19,7 @@ from .messages import health, telemetry
 from .modbus_io import ModbusBackend
 from .mqtt_client import MqttClient
 from .outbox import Outbox
+from .pump_controller import PumpController
 from .simulator import FieldSimulator
 from .valve_controller import ValveController
 
@@ -49,30 +50,55 @@ class Gateway:
                 raise RuntimeError(f"无法打开串口 {cfg.modbus.get('serialPort')}")
 
         self.controller = ValveController(cfg)
+        self.pump_controller = PumpController(cfg)
 
-        def drive(code: str, open_: bool) -> None:
+        def drive_valve(code: str, open_: bool) -> None:
             with self._bus_lock:
                 self.backend.set_valve(code, open_)
 
-        self.controller.attach_driver(drive)
+        def drive_pump(code: str, opening: int) -> None:
+            with self._bus_lock:
+                self.backend.set_pump(code, opening)
+
+        self.controller.attach_driver(drive_valve)
+        self.pump_controller.attach_driver(drive_pump)
 
         self.mqtt = MqttClient(cfg.gatewaySn, cfg.mqtt, self.outbox, cfg.outboxBatch)
         self.mqtt.on_command = self._on_command
+        self.mqtt.on_device_command = self._on_device_command
         self.mqtt.on_config = self._on_config
+        # 通信中断联锁计时
+        self._comm_ok_since = time.time()
+        self._comm_ever_connected = False
+        self._comm_tripped = False
 
     # ---------------------------------------------------------------- #
+    def _publish_replies(self, replies) -> None:
+        for m in replies:
+            t = m.get("type")
+            kind = "valveStatus" if t == "valveStatus" else \
+                   "deviceStatus" if t == "deviceStatus" else "events"
+            self.mqtt.publish_nowait(kind, m)
+
     def _on_command(self, msg: Dict[str, Any]) -> None:
         try:
             with self._bus_lock:
                 replies = self.controller.handle_command(msg)
-            for m in replies:
-                kind = "valveStatus" if m.get("type") == "valveStatus" else "events"
-                self.mqtt.publish_nowait(kind, m)
+            self._publish_replies(replies)
         except Exception:
             log.exception("处理阀控命令失败")
 
+    def _on_device_command(self, msg: Dict[str, Any]) -> None:
+        try:
+            with self._bus_lock:
+                replies = self.pump_controller.handle_command(msg)
+            self._publish_replies(replies)
+        except Exception:
+            log.exception("处理设备命令失败")
+
     def _on_config(self, msg: Dict[str, Any]) -> None:
         self.controller.apply_config(msg)
+        self.pump_controller.apply_config(msg)
         if msg.get("pollIntervalSec"):
             self.cfg.pollIntervalSec = float(msg["pollIntervalSec"])
 
@@ -85,18 +111,28 @@ class Gateway:
                 self.sim.step(dt_sec * scale)
             frame = self.backend.poll()
 
-        # 本地联锁（最高优先级，离线也生效）
+        # 本地联锁（最高优先级，离线也生效）：阀门 + 施肥泵
         events_out = self.controller.evaluate(frame)
-        for m in events_out:
-            kind = "valveStatus" if m.get("type") == "valveStatus" else "events"
-            self.mqtt.publish_nowait(kind, m)
+        # 阀门侧 CRITICAL 联锁（缺水/超湿/EC/pH…）联动全停注肥泵
+        if any(m.get("type") == "event" and m.get("level") == "CRITICAL"
+               and str(m.get("code", "")).startswith("INTERLOCK_")
+               for m in events_out):
+            events_out += self.pump_controller.safety_stop_all(
+                next((m["code"] for m in events_out
+                      if m.get("type") == "event" and m.get("level") == "CRITICAL"),
+                     "INTERLOCK_VALVE"))
+        events_out += self.pump_controller.evaluate(frame)
+        self._publish_replies(events_out)
 
-        # 遥测：soil / weather / flow（阀位以 valve/status 为准）
+        # 与云端通信中断超限 → 紧急关阀停泵（本地安全策略）
+        self._check_comm_lost()
+
+        # 遥测：soil / weather / flow / pressure（阀位以 valve/status 为准，泵以 device/status 为准）
         records = []
         ts = int(time.time() * 1000)
         for d in self.cfg.devices:
             reading = frame.get(d.code)
-            if not reading or reading["kind"] == "valve":
+            if not reading or reading["kind"] in ("valve", "pump"):
                 continue
             records.append({
                 "deviceCode": d.code,
@@ -108,6 +144,23 @@ class Gateway:
         if records:
             self.mqtt.publish_nowait("telemetry",
                                      telemetry(self.cfg.gatewaySn, records, ts))
+
+    def _check_comm_lost(self) -> None:
+        limit = float(self.cfg.interlocks.commLostSec)
+        if self.mqtt.connected.is_set():
+            self._comm_ok_since = time.time()
+            self._comm_ever_connected = True
+            self._comm_tripped = False
+            return
+        if not self._comm_ever_connected:
+            return  # 启动后从未连上，不判中断（本地联锁仍生效）
+        offline_for = time.time() - self._comm_ok_since
+        if not self._comm_tripped and offline_for >= limit:
+            log.error("与云端通信中断 %.0fs ≥ %.0fs，紧急关阀停泵", offline_for, limit)
+            replies = self.controller.emergency_close_all("INTERLOCK_COMM_LOST")
+            replies += self.pump_controller.safety_stop_all("INTERLOCK_COMM_LOST")
+            self._publish_replies(replies)
+            self._comm_tripped = True
 
     def _health_loop(self) -> None:
         while not self._stop.is_set():

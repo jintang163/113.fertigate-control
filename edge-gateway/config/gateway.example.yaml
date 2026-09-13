@@ -20,6 +20,14 @@ interlocks:
   ecHigh: 3.0
   phLow: 5.0
   phHigh: 8.0
+  # 缺水联锁：主管道水压下限 kPa / 阀开最低瞬时流量 m³/h，持续 15s 判定
+  pressureMinKpa: 80.0
+  flowMinM3h: 0.5
+  waterLostDelaySec: 15
+  # 施肥泵过载电流 A
+  pumpOverloadA: 8.0
+  # 与云端通信中断超过 300s，本地紧急关阀停泵
+  commLostSec: 300
 
 # Modbus-RTU 总线（真实硬件）
 modbus:
@@ -76,6 +84,19 @@ devices:
     kind: flow
     modbusAddr: 5
     linkedValve: V-01
+  - code: PS-01
+    kind: pressure
+    modbusAddr: 6
+    linkedValve: V-01
+    sim:
+      initialKpa: 250.0
+  - code: FP-01
+    kind: pump
+    modbusAddr: 7
+    linkedPressure: PS-01
+    sim:
+      capacityLph: 120.0   # 注肥泵额定流量，用于肥液量折算
+      ratedCurrent: 4.0    # 额定电流 A，过载阈值 8A
 
 sqlite:
   path: data/gateway-outbox.db

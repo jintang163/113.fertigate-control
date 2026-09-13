@@ -138,6 +138,7 @@ public class DecisionClient {
         r.setStage(text(node.get("stage"), null));
         r.setThetaStart(doub(node.get("thetaStart")));
         r.setThetaTarget(doub(node.get("thetaTarget")));
+        r.setMoisture(doub(node.get("moisture")));
         r.setDeficitMm(doub(node.get("deficitMm")));
         r.setVolumeM3(doub(node.get("volumeM3")));
         JsonNode dur = node.get("durationSec");

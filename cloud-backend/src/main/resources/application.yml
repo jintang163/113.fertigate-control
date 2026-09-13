@@ -38,6 +38,7 @@ mqtt:
   topics:
     telemetry: farm/+/telemetry
     valve-status: farm/+/valve/status
+    device-status: farm/+/device/status
     events: farm/+/events
     health: farm/+/health
 
@@ -62,6 +63,12 @@ app:
     command-final-timeout-ms: ${COMMAND_FINAL_TIMEOUT_MS:60000}
     # 遥测数据有效期
     staleness-sec: ${DATA_STALENESS_SEC:600}
+    # 设备心跳超时置离线（秒）
+    device-offline-sec: ${DEVICE_OFFLINE_SEC:180}
+    # 轮灌调度：释放检查周期（秒）、相邻灌区切换间隔（秒）、时窗时区
+    rotation-tick-sec: ${ROTATION_TICK_SEC:30}
+    rotation-gap-sec: ${ROTATION_GAP_SEC:300}
+    zone-id: ${FARM_ZONE_ID:Asia/Shanghai}
     # 默认纬度（无气象/预报服务时）
     latitude: ${FARM_LATITUDE:34.5}
 

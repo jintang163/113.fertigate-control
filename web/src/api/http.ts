@@ -55,4 +55,8 @@ export function put<T>(url: string, data?: unknown, config?: AxiosRequestConfig)
   return http.put(url, data, config) as unknown as Promise<T>
 }
 
+export function del<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+  return http.delete(url, config) as unknown as Promise<T>
+}
+
 export default http

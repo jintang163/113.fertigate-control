@@ -53,19 +53,25 @@ class ValveController:
         self._valves: Dict[str, ValveRuntime] = {
             d.code: ValveRuntime(code=d.code) for d in cfg.by_kind("valve")
         }
-        # valve → 取数传感器 / 流量计
+        # valve → 取数传感器 / 流量计 / 压力传感器
         self._sensor_of: Dict[str, str] = {}
         self._flow_of: Dict[str, str] = {}
+        self._pressure_of: Dict[str, str] = {}
         for d in cfg.devices:
             if d.kind == "valve" and d.sensorCode:
                 self._sensor_of[d.code] = d.sensorCode
             if d.kind == "flow" and d.linkedValve:
                 self._flow_of[d.linkedValve] = d.code
+            if d.kind == "pressure" and d.linkedValve:
+                self._pressure_of[d.linkedValve] = d.code
         # 传感器最近有效数据时间
         self._last_seen: Dict[str, float] = {}
         self._driver: Any = None
         self._last_frame: Dict[str, Dict[str, Any]] = {}
         self._ec_high_since: Dict[str, float] = {}
+        # 缺水联锁去抖：首次低于阈值的时间
+        self._pressure_low_since: Dict[str, float] = {}
+        self._flow_low_since: Dict[str, float] = {}
 
     def attach_driver(self, driver: Any) -> None:
         """挂载阀门驱动回调 driver(valve_code, open: bool)。
@@ -208,6 +214,39 @@ class ValveController:
                             command_id=run.command_id, job_id=run.job_id, out=out)
                 continue
 
+            # 4b) 主管道水压低（缺水保护，持续 waterLostDelaySec 去抖）
+            pressure = self._pressure_of_valve(code, frame)
+            if pressure is not None and pressure < self.interlocks.pressureMinKpa:
+                since = self._pressure_low_since.get(code, now)
+                self._pressure_low_since[code] = since
+                if now - since >= self.interlocks.waterLostDelaySec:
+                    self._interlock_close(
+                        rt, "INTERLOCK_WATER_LOST",
+                        f"主管道水压 {pressure}kPa 持续低于 "
+                        f"{self.interlocks.pressureMinKpa}kPa（缺水），阀门已关闭",
+                        {"pressure": pressure, "thresholdKpa": self.interlocks.pressureMinKpa}, out)
+                    continue
+            else:
+                self._pressure_low_since.pop(code, None)
+
+            # 4c) 阀开但瞬时流量过低（爆管/堵塞/缺水，启动 30s 宽限 + 延时去抖）
+            instant = None
+            if flow_code and flow_code in frame:
+                instant = frame[flow_code]["values"].get("instantFlow")
+            if instant is not None and elapsed > 30 \
+                    and instant < self.interlocks.flowMinM3h:
+                since = self._flow_low_since.get(code, now)
+                self._flow_low_since[code] = since
+                if now - since >= self.interlocks.waterLostDelaySec:
+                    self._interlock_close(
+                        rt, "INTERLOCK_FLOW_LOW",
+                        f"阀开但瞬时流量 {instant}m³/h 持续低于 "
+                        f"{self.interlocks.flowMinM3h}m³/h（缺水/爆管），阀门已关闭",
+                        {"instantFlow": instant, "thresholdM3h": self.interlocks.flowMinM3h}, out)
+                    continue
+            else:
+                self._flow_low_since.pop(code, None)
+
             # 5) EC / pH 肥害联锁（持续 2 个周期超限才关，防抖动）
             ec, ph = values.get("ec"), values.get("ph")
             if ec is not None and ec > self.interlocks.ecHigh:
@@ -233,8 +272,34 @@ class ValveController:
         return out
 
     # ------------------------------------------------------------------ #
+    # 通信中断紧急关阀（主程序在与云端连接持续丢失时调用）
+    # ------------------------------------------------------------------ #
+    def emergency_close_all(self, reason: str = "INTERLOCK_COMM_LOST") -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for code, rt in self._valves.items():
+            if rt.is_open and rt.run is not None:
+                out.append(event(
+                    self.cfg.gatewaySn, "CRITICAL", reason,
+                    f"与云端通信中断超限，阀门 {code} 紧急关闭（本地安全策略）",
+                    valve_code=code, context={"jobId": rt.run.job_id}))
+                self._close(rt, reason, command_id=rt.run.command_id,
+                            job_id=rt.run.job_id, out=out)
+        return out
+
+    # ------------------------------------------------------------------ #
     # 内部
     # ------------------------------------------------------------------ #
+    def _pressure_of_valve(self, valve_code: str,
+                           frame: Dict[str, Dict[str, Any]]) -> Optional[float]:
+        code = self._pressure_of.get(valve_code)
+        if not code:
+            return None
+        v = (frame.get(code, {}).get("values") or {}).get("pressure")
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
     def _open_blocked(self, valve_code: str, sensor_code: Optional[str]) \
             -> Optional[tuple[str, str]]:
         last = self._last_seen.get(sensor_code or "")

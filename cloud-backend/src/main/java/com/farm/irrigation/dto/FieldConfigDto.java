@@ -9,6 +9,9 @@ public class FieldConfigDto {
     private String mode;
     private BigDecimal hardMaxOffsetPct;
     private BigDecimal hardMin;
+    /** 土壤湿度策略下限/上限（%） */
+    private BigDecimal moistureLowerPct;
+    private BigDecimal moistureUpperPct;
     private Integer maxDurationSec;
     private BigDecimal minIntervalH;
     private BigDecimal ecMin;
@@ -20,6 +23,22 @@ public class FieldConfigDto {
     private BigDecimal efficiency;
     private Boolean enabled;
 
+    // ---- 气象联动 ----
+    private Boolean weatherLinked;
+    private BigDecimal windMaxMs;
+    private BigDecimal tempMin;
+    private BigDecimal tempMax;
+    private BigDecimal humidityMin;
+    private BigDecimal rainTodaySkipMm;
+    private BigDecimal forecastSkipMm;
+    private Short forecastDays;
+
+    // ---- 缺水 / 过载联锁 ----
+    private BigDecimal pressureMinKpa;
+    private BigDecimal flowMinM3h;
+    private Integer waterLostDelaySec;
+    private BigDecimal pumpOverloadA;
+
     public BigDecimal getThetaFc() { return thetaFc; }
     public void setThetaFc(BigDecimal thetaFc) { this.thetaFc = thetaFc; }
     public BigDecimal getThetaWp() { return thetaWp; }
@@ -30,6 +49,10 @@ public class FieldConfigDto {
     public void setHardMaxOffsetPct(BigDecimal hardMaxOffsetPct) { this.hardMaxOffsetPct = hardMaxOffsetPct; }
     public BigDecimal getHardMin() { return hardMin; }
     public void setHardMin(BigDecimal hardMin) { this.hardMin = hardMin; }
+    public BigDecimal getMoistureLowerPct() { return moistureLowerPct; }
+    public void setMoistureLowerPct(BigDecimal moistureLowerPct) { this.moistureLowerPct = moistureLowerPct; }
+    public BigDecimal getMoistureUpperPct() { return moistureUpperPct; }
+    public void setMoistureUpperPct(BigDecimal moistureUpperPct) { this.moistureUpperPct = moistureUpperPct; }
     public Integer getMaxDurationSec() { return maxDurationSec; }
     public void setMaxDurationSec(Integer maxDurationSec) { this.maxDurationSec = maxDurationSec; }
     public BigDecimal getMinIntervalH() { return minIntervalH; }
@@ -50,4 +73,28 @@ public class FieldConfigDto {
     public void setEfficiency(BigDecimal efficiency) { this.efficiency = efficiency; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
+    public Boolean getWeatherLinked() { return weatherLinked; }
+    public void setWeatherLinked(Boolean weatherLinked) { this.weatherLinked = weatherLinked; }
+    public BigDecimal getWindMaxMs() { return windMaxMs; }
+    public void setWindMaxMs(BigDecimal windMaxMs) { this.windMaxMs = windMaxMs; }
+    public BigDecimal getTempMin() { return tempMin; }
+    public void setTempMin(BigDecimal tempMin) { this.tempMin = tempMin; }
+    public BigDecimal getTempMax() { return tempMax; }
+    public void setTempMax(BigDecimal tempMax) { this.tempMax = tempMax; }
+    public BigDecimal getHumidityMin() { return humidityMin; }
+    public void setHumidityMin(BigDecimal humidityMin) { this.humidityMin = humidityMin; }
+    public BigDecimal getRainTodaySkipMm() { return rainTodaySkipMm; }
+    public void setRainTodaySkipMm(BigDecimal rainTodaySkipMm) { this.rainTodaySkipMm = rainTodaySkipMm; }
+    public BigDecimal getForecastSkipMm() { return forecastSkipMm; }
+    public void setForecastSkipMm(BigDecimal forecastSkipMm) { this.forecastSkipMm = forecastSkipMm; }
+    public Short getForecastDays() { return forecastDays; }
+    public void setForecastDays(Short forecastDays) { this.forecastDays = forecastDays; }
+    public BigDecimal getPressureMinKpa() { return pressureMinKpa; }
+    public void setPressureMinKpa(BigDecimal pressureMinKpa) { this.pressureMinKpa = pressureMinKpa; }
+    public BigDecimal getFlowMinM3h() { return flowMinM3h; }
+    public void setFlowMinM3h(BigDecimal flowMinM3h) { this.flowMinM3h = flowMinM3h; }
+    public Integer getWaterLostDelaySec() { return waterLostDelaySec; }
+    public void setWaterLostDelaySec(Integer waterLostDelaySec) { this.waterLostDelaySec = waterLostDelaySec; }
+    public BigDecimal getPumpOverloadA() { return pumpOverloadA; }
+    public void setPumpOverloadA(BigDecimal pumpOverloadA) { this.pumpOverloadA = pumpOverloadA; }
 }

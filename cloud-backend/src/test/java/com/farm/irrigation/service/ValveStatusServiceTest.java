@@ -32,6 +32,7 @@ class ValveStatusServiceTest {
     @Mock private SensorLatestRepository sensorLatestRepository;
     @Mock private DeviceService deviceService;
     @Mock private InfluxService influx;
+    @Mock private LedgerService ledgerService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private ValveStatusService service;
@@ -39,7 +40,7 @@ class ValveStatusServiceTest {
     @BeforeEach
     void setUp() {
         service = new ValveStatusService(jobRepository, commandRepository,
-                sensorLatestRepository, deviceService, influx, objectMapper);
+                sensorLatestRepository, deviceService, influx, objectMapper, ledgerService);
     }
 
     private IrrigationJob runningJob() {

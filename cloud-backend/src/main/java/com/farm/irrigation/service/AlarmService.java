@@ -58,6 +58,14 @@ public class AlarmService {
         return alarmRepository.existsByFieldIdAndLevelAndAcknowledged(fieldId, "CRITICAL", false);
     }
 
+    public boolean hasUnacknowledged(Long fieldId, String level, String type) {
+        if (fieldId == null) {
+            return false;
+        }
+        return alarmRepository.existsByFieldIdAndLevelAndTypeAndAcknowledged(
+                fieldId, level, type, false);
+    }
+
     public Page<Alarm> query(String level, Boolean ack, int page, int size) {
         PageRequest pr = PageRequest.of(Math.max(page, 0), Math.max(size, 1),
                 Sort.by(Sort.Direction.DESC, "createdAt"));

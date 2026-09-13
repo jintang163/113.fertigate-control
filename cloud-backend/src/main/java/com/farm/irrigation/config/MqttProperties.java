@@ -18,6 +18,7 @@ public class MqttProperties {
     public static class Topics {
         private String telemetry = "farm/+/telemetry";
         private String valveStatus = "farm/+/valve/status";
+        private String deviceStatus = "farm/+/device/status";
         private String events = "farm/+/events";
         private String health = "farm/+/health";
 
@@ -25,6 +26,8 @@ public class MqttProperties {
         public void setTelemetry(String telemetry) { this.telemetry = telemetry; }
         public String getValveStatus() { return valveStatus; }
         public void setValveStatus(String valveStatus) { this.valveStatus = valveStatus; }
+        public String getDeviceStatus() { return deviceStatus; }
+        public void setDeviceStatus(String deviceStatus) { this.deviceStatus = deviceStatus; }
         public String getEvents() { return events; }
         public void setEvents(String events) { this.events = events; }
         public String getHealth() { return health; }

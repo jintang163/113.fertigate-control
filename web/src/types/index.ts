@@ -38,6 +38,24 @@ export interface FieldConfig {
   /** 灌溉水利用系数 η */
   efficiency: number
   enabled: boolean
+
+  // ---- 阈值策略：土壤湿度上下限 + 气象联动 + 安全联锁 ----
+  moistureLowerPct?: number
+  moistureUpperPct?: number
+  weatherLinked?: boolean
+  windMaxMs?: number
+  tempMin?: number
+  tempMax?: number
+  humidityMin?: number
+  rainTodaySkipMm?: number
+  forecastSkipMm?: number
+  forecastDays?: number
+  /** 缺水联锁 */
+  pressureMinKpa?: number
+  flowMinM3h?: number
+  waterLostDelaySec?: number
+  /** 施肥泵过载电流 A */
+  pumpOverloadA?: number
 }
 
 export interface Field {
@@ -49,8 +67,42 @@ export interface Field {
   /** 滴头/系统总流量 L/h */
   emitterTotalLph: number
   valveCode?: string | null
+  /** 比例注肥泵编码 */
+  fertPumpCode?: string | null
+  /** 注肥比例 %（体积比） */
+  injectRatioPct?: number
+  /** 轮灌优先级（小者优先） */
+  priority?: number
+  /** 允许灌溉时间窗（一天内分钟） */
+  windowStartMin?: number | null
+  windowEndMin?: number | null
+  /** 周允许位图 周一..周日 */
+  windowDays?: string
+  /** 注肥阶段 */
+  fertPlan?: FertPhase[]
+  /** 作物品种 */
+  cropVariety?: string
   sensorCodes?: string[]
   config: FieldConfig
+}
+
+/** 注肥阶段（PRE_WATER 清水 / MID_RUN 注肥 / FLUSH 冲洗） */
+export interface FertPhase {
+  phase: 'PRE_WATER' | 'MID_RUN' | 'FLUSH' | string
+  ratioPct: number
+  durationFraction: number
+}
+
+/** 作物生育期记录 */
+export interface StageRecord {
+  id?: number
+  fieldId?: number
+  stageCode: string
+  stageName?: string
+  recordDate: string
+  note?: string
+  operator?: string
+  createdAt?: string
 }
 
 /** GET /fields/{id}/status 实时状态 */
@@ -168,19 +220,50 @@ export type DeviceType =
   | 'WEATHER_STATION'
   | 'VALVE'
   | 'FLOW_METER'
+  | 'FERT_PUMP'
+  | 'PRESSURE_SENSOR'
   | string
+
+/** 设备投运状态 */
+export type DeviceOperationalStatus = 'UNKNOWN' | 'ENABLED' | 'DISABLED' | 'FAULT'
 
 export interface Device {
   id?: number
   code: string
+  name?: string
   type: DeviceType
   gatewaySn: string
   modbusAddr?: number
   protocolConfig?: Record<string, unknown>
+  params?: Record<string, unknown>
+  linkedField?: number | null
   online: boolean
+  status?: DeviceOperationalStatus
+  /** 执行器当前开度 0-100 */
+  opening?: number | null
   lastHeartbeat?: string | null
+  registeredAt?: string
   /** 最新遥测值 */
   latest?: Record<string, number | string | null>
+}
+
+export interface DevicePayload {
+  code: string
+  name?: string
+  type: string
+  gatewaySn?: string
+  modbusAddr?: number
+  protocolConfig?: Record<string, unknown>
+  params?: Record<string, unknown>
+  linkedField?: number | null
+  status?: string
+}
+
+/** POST /api/devices/{code}/command */
+export interface DeviceCommandPayload {
+  action: 'START' | 'STOP' | 'SET_OPENING'
+  opening?: number
+  jobId?: number
 }
 
 export interface GatewayInterlocks {
@@ -190,6 +273,11 @@ export interface GatewayInterlocks {
   ecHigh?: number
   phLow?: number
   phHigh?: number
+  pressureMinKpa?: number
+  flowMinM3h?: number
+  waterLostDelaySec?: number
+  pumpOverloadA?: number
+  commLostSec?: number
   [key: string]: number | undefined
 }
 
@@ -220,4 +308,82 @@ export interface ControlPayload {
   action: 'OPEN' | 'CLOSE'
   volumeM3?: number
   force?: boolean
+}
+
+// ---------------- 轮灌计划 ----------------
+
+export type RotationItemStatus = 'PENDING' | 'RELEASED' | 'DONE' | 'SKIPPED' | 'BLOCKED'
+export type RotationPlanStatus =
+  | 'DRAFT'
+  | 'SCHEDULED'
+  | 'RUNNING'
+  | 'DONE'
+  | 'CANCELLED'
+
+export interface RotationPlanItem {
+  id: number
+  planId: number
+  fieldId: number
+  seq: number
+  priority: number
+  scheduledStart: string
+  plannedVolumeM3?: number | null
+  jobId?: number | null
+  status: RotationItemStatus
+  skipReason?: string | null
+}
+
+export interface RotationPlan {
+  id: number
+  name: string
+  status: RotationPlanStatus
+  planDate?: string | null
+  generatedAt?: string
+  generatedBy?: string
+  note?: string
+  totalPlannedM3?: number
+  totalAppliedM3?: number
+  items?: RotationPlanItem[]
+}
+
+export interface RotationGeneratePayload {
+  name?: string
+  planDate?: string
+  generatedBy?: string
+  note?: string
+  fieldIds?: number[]
+  startHour?: number
+  startMinute?: number
+}
+
+// ---------------- 灌肥台账 ----------------
+
+export type LedgerKind = 'WATER' | 'FERTIGATION'
+export type LedgerMode = 'AUTO' | 'MANUAL' | 'SCHEDULED' | 'SAFETY'
+
+export interface LedgerRecord {
+  id: number
+  fieldId: number
+  fieldName?: string
+  cropVariety?: string
+  jobId?: number | null
+  planItemId?: number | null
+  kind: LedgerKind
+  startTime: string
+  endTime?: string | null
+  waterM3: number
+  fertilizerKg?: number
+  fertilizerL?: number
+  fertilizerName?: string
+  injectRatioPct?: number
+  executionMode: LedgerMode
+  stopReason?: string
+}
+
+export interface LedgerSummary {
+  date: string
+  waterM3: number
+  fertilizerL: number
+  fertilizerKg: number
+  events: number
 }

@@ -31,15 +31,24 @@ class InterlockConfig:
     ecHigh: float = 3.0
     phLow: float = 5.0
     phHigh: float = 8.0
+    # 缺水联锁：主管道水压下限 kPa / 阀开最低瞬时流量 m³h，持续 waterLostDelaySec 判定
+    pressureMinKpa: float = 80.0
+    flowMinM3h: float = 0.5
+    waterLostDelaySec: float = 15.0
+    # 施肥泵过载电流 A
+    pumpOverloadA: float = 8.0
+    # 与云端通信中断超过该秒数时，本地紧急关停所有执行器
+    commLostSec: float = 300.0
 
 
 @dataclass
 class DeviceConfig:
     code: str
-    kind: str                       # soil | weather | valve | flow
+    kind: str                       # soil | weather | valve | flow | pressure | pump
     modbusAddr: int = 0
     linkedValve: str | None = None
     sensorCode: str | None = None   # valve 设备联锁取数点
+    linkedPressure: str | None = None  # pump 关联的主管道压力传感器
     sim: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,6 +82,7 @@ def load_config(path: str) -> GatewayConfig:
     devices = [DeviceConfig(
         code=d["code"], kind=d["kind"], modbusAddr=d.get("modbusAddr", 0),
         linkedValve=d.get("linkedValve"), sensorCode=d.get("sensorCode"),
+        linkedPressure=d.get("linkedPressure"),
         sim=d.get("sim") or {},
     ) for d in raw.get("devices", [])]
 

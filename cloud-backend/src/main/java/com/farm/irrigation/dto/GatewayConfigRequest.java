@@ -16,6 +16,11 @@ public class GatewayConfigRequest {
         private BigDecimal ecHigh;
         private BigDecimal phLow;
         private BigDecimal phHigh;
+        private BigDecimal pressureMinKpa;
+        private BigDecimal flowMinM3h;
+        private Integer waterLostDelaySec;
+        private BigDecimal pumpOverloadA;
+        private Integer commLostSec;
 
         public BigDecimal getMoistureHardMax() { return moistureHardMax; }
         public void setMoistureHardMax(BigDecimal moistureHardMax) { this.moistureHardMax = moistureHardMax; }
@@ -29,6 +34,16 @@ public class GatewayConfigRequest {
         public void setPhLow(BigDecimal phLow) { this.phLow = phLow; }
         public BigDecimal getPhHigh() { return phHigh; }
         public void setPhHigh(BigDecimal phHigh) { this.phHigh = phHigh; }
+        public BigDecimal getPressureMinKpa() { return pressureMinKpa; }
+        public void setPressureMinKpa(BigDecimal pressureMinKpa) { this.pressureMinKpa = pressureMinKpa; }
+        public BigDecimal getFlowMinM3h() { return flowMinM3h; }
+        public void setFlowMinM3h(BigDecimal flowMinM3h) { this.flowMinM3h = flowMinM3h; }
+        public Integer getWaterLostDelaySec() { return waterLostDelaySec; }
+        public void setWaterLostDelaySec(Integer waterLostDelaySec) { this.waterLostDelaySec = waterLostDelaySec; }
+        public BigDecimal getPumpOverloadA() { return pumpOverloadA; }
+        public void setPumpOverloadA(BigDecimal pumpOverloadA) { this.pumpOverloadA = pumpOverloadA; }
+        public Integer getCommLostSec() { return commLostSec; }
+        public void setCommLostSec(Integer commLostSec) { this.commLostSec = commLostSec; }
     }
 
     public Integer getPollIntervalSec() { return pollIntervalSec; }

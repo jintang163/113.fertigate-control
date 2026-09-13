@@ -1,5 +1,14 @@
 /** 业务标签/颜色映射 */
-import type { AlarmLevel, DeviceType, JobStatus, ValveState } from '@/types'
+import type {
+  AlarmLevel,
+  DeviceType,
+  JobStatus,
+  LedgerKind,
+  LedgerMode,
+  RotationItemStatus,
+  RotationPlanStatus,
+  ValveState
+} from '@/types'
 
 export const JOB_STATUS_COLOR: Record<JobStatus, string> = {
   RUNNING: 'processing',
@@ -13,6 +22,62 @@ export const JOB_STATUS_TEXT: Record<JobStatus, string> = {
   DONE: '已完成',
   ABORTED: '已中止',
   PLANNED: '已计划'
+}
+
+export const TRIGGER_TEXT: Record<string, string> = {
+  AUTO: '自动',
+  MANUAL: '手动',
+  SCHEDULED: '轮灌计划',
+  SAFETY_OFF: '安全联锁'
+}
+
+export const LEDGER_KIND_TEXT: Record<LedgerKind, string> = {
+  WATER: '灌水',
+  FERTIGATION: '施肥'
+}
+
+export const LEDGER_KIND_COLOR: Record<LedgerKind, string> = {
+  WATER: 'blue',
+  FERTIGATION: 'gold'
+}
+
+export const LEDGER_MODE_TEXT: Record<LedgerMode, string> = {
+  AUTO: '自动',
+  MANUAL: '手动',
+  SCHEDULED: '轮灌计划',
+  SAFETY: '安全联锁'
+}
+
+export const ROTATION_PLAN_STATUS_TEXT: Record<RotationPlanStatus, string> = {
+  DRAFT: '草稿',
+  SCHEDULED: '已排程',
+  RUNNING: '执行中',
+  DONE: '已完成',
+  CANCELLED: '已取消'
+}
+
+export const ROTATION_PLAN_STATUS_COLOR: Record<RotationPlanStatus, string> = {
+  DRAFT: 'default',
+  SCHEDULED: 'blue',
+  RUNNING: 'processing',
+  DONE: 'green',
+  CANCELLED: 'red'
+}
+
+export const ROTATION_ITEM_STATUS_TEXT: Record<RotationItemStatus, string> = {
+  PENDING: '待执行',
+  RELEASED: '已释放',
+  DONE: '已完成',
+  SKIPPED: '已跳过',
+  BLOCKED: '被拦截'
+}
+
+export const ROTATION_ITEM_STATUS_COLOR: Record<RotationItemStatus, string> = {
+  PENDING: 'default',
+  RELEASED: 'processing',
+  DONE: 'green',
+  SKIPPED: 'orange',
+  BLOCKED: 'red'
 }
 
 export const ALARM_LEVEL_COLOR: Record<AlarmLevel, string> = {
@@ -45,7 +110,9 @@ export const DEVICE_TYPE_TEXT: Record<DeviceType, string> = {
   SOIL_SENSOR: '土壤传感器',
   WEATHER_STATION: '气象站',
   VALVE: '电磁阀',
-  FLOW_METER: '流量计'
+  FLOW_METER: '流量计',
+  FERT_PUMP: '施肥泵',
+  PRESSURE_SENSOR: '压力变送器'
 }
 
 export const VALVE_COLOR: Record<string, string> = {

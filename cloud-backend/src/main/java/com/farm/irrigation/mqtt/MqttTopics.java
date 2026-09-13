@@ -8,6 +8,11 @@ public final class MqttTopics {
         return "farm/" + gatewaySn + "/valve/command";
     }
 
+    /** 通用执行器指令（施肥泵/调节阀等），与 valve/command 同构幂等。 */
+    public static String deviceCommand(String gatewaySn) {
+        return "farm/" + gatewaySn + "/device/command";
+    }
+
     public static String config(String gatewaySn) {
         return "farm/" + gatewaySn + "/config";
     }

@@ -33,10 +33,22 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '设备管理' }
   },
   {
+    path: '/rotation',
+    name: 'rotation',
+    component: () => import('@/views/RotationView.vue'),
+    meta: { title: '轮灌调度' }
+  },
+  {
     path: '/jobs',
     name: 'jobs',
     component: () => import('@/views/JobsView.vue'),
     meta: { title: '灌溉作业' }
+  },
+  {
+    path: '/ledger',
+    name: 'ledger',
+    component: () => import('@/views/LedgerView.vue'),
+    meta: { title: '灌肥台账' }
   },
   {
     path: '/alarms',

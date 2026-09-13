@@ -6,7 +6,9 @@ import {
   AppstoreOutlined,
   ExperimentOutlined,
   ApiOutlined,
+  ScheduleOutlined,
   HistoryOutlined,
+  FileTextOutlined,
   AlertOutlined
 } from '@ant-design/icons-vue'
 import { getGateways } from '@/api'
@@ -22,10 +24,12 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 const menuItems = [
   { key: '/dashboard', icon: () => h(DashboardOutlined), label: '总览仪表盘' },
-  { key: '/fields', icon: () => h(AppstoreOutlined), label: '田块管理' },
+  { key: '/fields', icon: () => h(AppstoreOutlined), label: '灌区管理' },
   { key: '/crops', icon: () => h(ExperimentOutlined), label: '作物模型' },
   { key: '/devices', icon: () => h(ApiOutlined), label: '设备管理' },
+  { key: '/rotation', icon: () => h(ScheduleOutlined), label: '轮灌调度' },
   { key: '/jobs', icon: () => h(HistoryOutlined), label: '灌溉作业' },
+  { key: '/ledger', icon: () => h(FileTextOutlined), label: '灌肥台账' },
   { key: '/alarms', icon: () => h(AlertOutlined), label: '告警中心' }
 ]
 

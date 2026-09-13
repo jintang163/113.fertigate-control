@@ -49,6 +49,26 @@ def event(gateway_sn: str, level: str, code: str, message: str,
     }
 
 
+def device_status(gateway_sn: str, device_code: str, state: str,
+                  command_id: Optional[str], job_id: Optional[str] = None,
+                  opening: Optional[int] = None, motor_current: Optional[float] = None,
+                  pressure: Optional[float] = None, overload: bool = False,
+                  ts: Optional[int] = None) -> Dict[str, Any]:
+    """施肥泵/调节阀等通用执行器状态回报（farm/{gw}/device/status）。"""
+    m: Dict[str, Any] = {
+        "type": "deviceStatus", "gatewaySn": gateway_sn, "ts": ts or now_ms(),
+        "deviceCode": device_code, "state": state,
+        "commandId": command_id, "jobId": job_id, "overload": overload,
+    }
+    if opening is not None:
+        m["opening"] = int(opening)
+    if motor_current is not None:
+        m["motorCurrent"] = round(motor_current, 2)
+    if pressure is not None:
+        m["pressure"] = round(pressure, 1)
+    return m
+
+
 def health(gateway_sn: str, uptime_sec: int, queue_depth: int, fw: str = "1.0.0") -> Dict[str, Any]:
     return {"type": "health", "gatewaySn": gateway_sn, "ts": now_ms(),
             "uptimeSec": uptime_sec, "queueDepth": queue_depth, "fw": fw}

@@ -54,10 +54,18 @@ public class FieldService {
         m.put("id", field.getId());
         m.put("name", field.getName());
         m.put("cropCode", field.getCropCode());
+        m.put("cropVariety", field.getCropVariety());
         m.put("areaM2", field.getAreaM2());
         m.put("irrigationMode", field.getIrrigationMode());
+        m.put("priority", field.getPriority());
         m.put("emitterTotalLph", field.getEmitterTotalLph());
         m.put("valveCode", field.getValveCode());
+        m.put("fertPumpCode", field.getFertPumpCode());
+        m.put("injectRatioPct", field.getInjectRatioPct());
+        m.put("windowStartMin", field.getWindowStartMin());
+        m.put("windowEndMin", field.getWindowEndMin());
+        m.put("windowDays", field.getWindowDays());
+        m.put("fertPlan", parseJson(field.getFertPlan()));
         m.put("sowingDate", field.getSowingDate());
         m.put("sensorCodes", sensorRepository.findDeviceCodesByFieldId(field.getId()));
         configRepository.findById(field.getId()).ifPresent(cfg -> m.put("config", configToView(cfg)));
@@ -71,6 +79,8 @@ public class FieldService {
         m.put("mode", c.getMode());
         m.put("hardMaxOffsetPct", c.getHardMaxOffsetPct());
         m.put("hardMin", c.getHardMin());
+        m.put("moistureLowerPct", c.getMoistureLowerPct());
+        m.put("moistureUpperPct", c.getMoistureUpperPct());
         m.put("maxDurationSec", c.getMaxDurationSec());
         m.put("minIntervalH", c.getMinIntervalH());
         m.put("ecMin", c.getEcMin());
@@ -80,6 +90,18 @@ public class FieldService {
         m.put("rainSkipMm", c.getRainSkipMm());
         m.put("wetRatio", c.getWetRatio());
         m.put("efficiency", c.getEfficiency());
+        m.put("weatherLinked", c.isWeatherLinked());
+        m.put("windMaxMs", c.getWindMaxMs());
+        m.put("tempMin", c.getTempMin());
+        m.put("tempMax", c.getTempMax());
+        m.put("humidityMin", c.getHumidityMin());
+        m.put("rainTodaySkipMm", c.getRainTodaySkipMm());
+        m.put("forecastSkipMm", c.getForecastSkipMm());
+        m.put("forecastDays", c.getForecastDays());
+        m.put("pressureMinKpa", c.getPressureMinKpa());
+        m.put("flowMinM3h", c.getFlowMinM3h());
+        m.put("waterLostDelaySec", c.getWaterLostDelaySec());
+        m.put("pumpOverloadA", c.getPumpOverloadA());
         m.put("enabled", c.isEnabled());
         return m;
     }
@@ -113,14 +135,53 @@ public class FieldService {
     private void applyFields(FieldEntity f, FieldDto dto) {
         f.setName(dto.getName());
         f.setCropCode(dto.getCropCode());
+        if (dto.getCropVariety() != null) {
+            f.setCropVariety(dto.getCropVariety());
+        }
         f.setAreaM2(dto.getAreaM2());
         if (dto.getIrrigationMode() != null) {
             f.setIrrigationMode(dto.getIrrigationMode());
         }
+        if (dto.getPriority() != null) {
+            f.setPriority(dto.getPriority());
+        }
         f.setEmitterTotalLph(dto.getEmitterTotalLph());
         f.setValveCode(dto.getValveCode());
+        if (dto.getFertPumpCode() != null) {
+            f.setFertPumpCode(dto.getFertPumpCode());
+        }
+        if (dto.getInjectRatioPct() != null) {
+            f.setInjectRatioPct(dto.getInjectRatioPct());
+        }
+        if (dto.getWindowStartMin() != null) {
+            f.setWindowStartMin(dto.getWindowStartMin());
+        }
+        if (dto.getWindowEndMin() != null) {
+            f.setWindowEndMin(dto.getWindowEndMin());
+        }
+        if (dto.getWindowDays() != null) {
+            f.setWindowDays(dto.getWindowDays());
+        }
+        if (dto.getFertPlan() != null) {
+            try {
+                f.setFertPlan(objectMapper.writeValueAsString(dto.getFertPlan()));
+            } catch (Exception e) {
+                throw ApiException.badRequest("invalid fertPlan json: " + e.getMessage());
+            }
+        }
         if (dto.getSowingDate() != null) {
             f.setSowingDate(dto.getSowingDate());
+        }
+    }
+
+    private Object parseJson(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, Object.class);
+        } catch (Exception e) {
+            return json;
         }
     }
 
@@ -143,6 +204,12 @@ public class FieldService {
         if (c.startsWith("FM")) {
             return "FLOW";
         }
+        if (c.startsWith("PS")) {
+            return "PRESSURE";
+        }
+        if (c.startsWith("FP") || c.startsWith("PUMP")) {
+            return "PUMP";
+        }
         if (c.startsWith("V")) {
             return "VALVE";
         }
@@ -164,6 +231,8 @@ public class FieldService {
         if (dto.getMode() != null) cfg.setMode(dto.getMode());
         if (dto.getHardMaxOffsetPct() != null) cfg.setHardMaxOffsetPct(dto.getHardMaxOffsetPct());
         if (dto.getHardMin() != null) cfg.setHardMin(dto.getHardMin());
+        if (dto.getMoistureLowerPct() != null) cfg.setMoistureLowerPct(dto.getMoistureLowerPct());
+        if (dto.getMoistureUpperPct() != null) cfg.setMoistureUpperPct(dto.getMoistureUpperPct());
         if (dto.getMaxDurationSec() != null) cfg.setMaxDurationSec(dto.getMaxDurationSec());
         if (dto.getMinIntervalH() != null) cfg.setMinIntervalH(dto.getMinIntervalH());
         if (dto.getEcMin() != null) cfg.setEcMin(dto.getEcMin());
@@ -174,6 +243,18 @@ public class FieldService {
         if (dto.getWetRatio() != null) cfg.setWetRatio(dto.getWetRatio());
         if (dto.getEfficiency() != null) cfg.setEfficiency(dto.getEfficiency());
         if (dto.getEnabled() != null) cfg.setEnabled(dto.getEnabled());
+        if (dto.getWeatherLinked() != null) cfg.setWeatherLinked(dto.getWeatherLinked());
+        if (dto.getWindMaxMs() != null) cfg.setWindMaxMs(dto.getWindMaxMs());
+        if (dto.getTempMin() != null) cfg.setTempMin(dto.getTempMin());
+        if (dto.getTempMax() != null) cfg.setTempMax(dto.getTempMax());
+        if (dto.getHumidityMin() != null) cfg.setHumidityMin(dto.getHumidityMin());
+        if (dto.getRainTodaySkipMm() != null) cfg.setRainTodaySkipMm(dto.getRainTodaySkipMm());
+        if (dto.getForecastSkipMm() != null) cfg.setForecastSkipMm(dto.getForecastSkipMm());
+        if (dto.getForecastDays() != null) cfg.setForecastDays(dto.getForecastDays());
+        if (dto.getPressureMinKpa() != null) cfg.setPressureMinKpa(dto.getPressureMinKpa());
+        if (dto.getFlowMinM3h() != null) cfg.setFlowMinM3h(dto.getFlowMinM3h());
+        if (dto.getWaterLostDelaySec() != null) cfg.setWaterLostDelaySec(dto.getWaterLostDelaySec());
+        if (dto.getPumpOverloadA() != null) cfg.setPumpOverloadA(dto.getPumpOverloadA());
         configRepository.save(cfg);
     }
 

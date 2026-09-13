@@ -46,7 +46,9 @@ class ControlEngineTest {
     @Mock private SnapshotService snapshotService;
     @Mock private DecisionClient decisionClient;
     @Mock private ValveCommandService valveCommandService;
+    @Mock private DeviceCommandService deviceCommandService;
     @Mock private AlarmService alarmService;
+    @Mock private com.farm.irrigation.service.LedgerService ledgerService;
 
     private ControlProperties props;
     private ControlEngine engine;
@@ -61,7 +63,9 @@ class ControlEngineTest {
         props = new ControlProperties();
         engine = new ControlEngine(fieldRepository, configRepository, cropModelRepository,
                 jobRepository, commandRepository, snapshotService, decisionClient,
-                valveCommandService, alarmService, props, new ObjectMapper());
+                valveCommandService, deviceCommandService, alarmService, ledgerService,
+                props, new ObjectMapper(),
+                new WeatherLinkageService(), new IrrigationWindow(props));
 
         field = new FieldEntity();
         field.setId(1L);

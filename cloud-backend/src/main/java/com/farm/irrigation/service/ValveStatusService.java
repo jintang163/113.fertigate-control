@@ -36,19 +36,22 @@ public class ValveStatusService {
     private final DeviceService deviceService;
     private final InfluxService influx;
     private final ObjectMapper objectMapper;
+    private final LedgerService ledgerService;
 
     public ValveStatusService(IrrigationJobRepository jobRepository,
                               ValveCommandRepository commandRepository,
                               SensorLatestRepository sensorLatestRepository,
                               DeviceService deviceService,
                               InfluxService influx,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              LedgerService ledgerService) {
         this.jobRepository = jobRepository;
         this.commandRepository = commandRepository;
         this.sensorLatestRepository = sensorLatestRepository;
         this.deviceService = deviceService;
         this.influx = influx;
         this.objectMapper = objectMapper;
+        this.ledgerService = ledgerService;
     }
 
     @Transactional
@@ -129,6 +132,7 @@ public class ValveStatusService {
                 fillDuration(job);
                 applyVolume(job, appliedVolume, totalFlow);
                 jobRepository.save(job);
+                ledgerService.settleForJob(job);
                 log.warn("Job {} aborted due to valve FAULT", job.getId());
             }
             default -> log.debug("unhandled valve state {} for job {}", state, job.getId());
@@ -143,6 +147,7 @@ public class ValveStatusService {
         fillDuration(job);
         applyVolume(job, appliedVolume, totalFlow);
         jobRepository.save(job);
+        ledgerService.settleForJob(job);
         log.info("Job {} DONE applied={}m3 reason={}", job.getId(), job.getAppliedM3(), job.getStopReason());
     }
 

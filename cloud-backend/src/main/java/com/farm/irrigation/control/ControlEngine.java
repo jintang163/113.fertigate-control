@@ -14,6 +14,7 @@ import com.farm.irrigation.repo.FieldRepository;
 import com.farm.irrigation.repo.IrrigationJobRepository;
 import com.farm.irrigation.repo.ValveCommandRepository;
 import com.farm.irrigation.service.AlarmService;
+import com.farm.irrigation.service.LedgerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -32,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Automatic control engine — the state machine from control-logic.md section 4.
@@ -45,6 +47,14 @@ public class ControlEngine {
     private static final Logger log = LoggerFactory.getLogger(ControlEngine.class);
     private static final DateTimeFormatter BIZ_FMT = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneId.systemDefault());
 
+    /** 运行中作业的缺水/低流量首次发生时间（联锁延时防抖），key=jobId。 */
+    private final Map<Long, Instant> pressureLowSince = new ConcurrentHashMap<>();
+    private final Map<Long, Instant> flowLowSince = new ConcurrentHashMap<>();
+    /** 作业当前注肥阶段（PRE_WATER/MID_RUN/FLUSH），仅在状态迁移时下发泵指令。 */
+    private final Map<Long, String> fertPhaseByJob = new ConcurrentHashMap<>();
+    /** 开阀后流量建立宽限（s），避免启动瞬间误判缺水。 */
+    private static final long FLOW_GRACE_SEC = 30;
+
     private final FieldRepository fieldRepository;
     private final FieldConfigRepository configRepository;
     private final CropModelRepository cropModelRepository;
@@ -53,9 +63,13 @@ public class ControlEngine {
     private final SnapshotService snapshotService;
     private final DecisionClient decisionClient;
     private final ValveCommandService valveCommandService;
+    private final DeviceCommandService deviceCommandService;
     private final AlarmService alarmService;
+    private final LedgerService ledgerService;
     private final ControlProperties props;
     private final ObjectMapper objectMapper;
+    private final WeatherLinkageService weatherLinkage;
+    private final IrrigationWindow irrigationWindow;
 
     public ControlEngine(FieldRepository fieldRepository,
                          FieldConfigRepository configRepository,
@@ -65,9 +79,13 @@ public class ControlEngine {
                          SnapshotService snapshotService,
                          DecisionClient decisionClient,
                          ValveCommandService valveCommandService,
+                         DeviceCommandService deviceCommandService,
                          AlarmService alarmService,
+                         LedgerService ledgerService,
                          ControlProperties props,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper,
+                         WeatherLinkageService weatherLinkage,
+                         IrrigationWindow irrigationWindow) {
         this.fieldRepository = fieldRepository;
         this.configRepository = configRepository;
         this.cropModelRepository = cropModelRepository;
@@ -76,9 +94,13 @@ public class ControlEngine {
         this.snapshotService = snapshotService;
         this.decisionClient = decisionClient;
         this.valveCommandService = valveCommandService;
+        this.deviceCommandService = deviceCommandService;
         this.alarmService = alarmService;
+        this.ledgerService = ledgerService;
         this.props = props;
         this.objectMapper = objectMapper;
+        this.weatherLinkage = weatherLinkage;
+        this.irrigationWindow = irrigationWindow;
     }
 
     // ------------------------------------------------------------------
@@ -188,6 +210,7 @@ public class ControlEngine {
                                 "阀门 " + job.getValveCode() + " OPEN 命令 " + vc.getCommandId()
                                         + " 在 " + (props.getCommandFinalTimeoutMs() / 1000) + "s 内未确认，作业中止",
                                 Map.of("commandId", vc.getCommandId(), "jobId", job.getId()));
+                        ledgerService.settleForJob(job);
                     }
                 });
             }
@@ -206,6 +229,12 @@ public class ControlEngine {
             return;
         }
 
+        // 灌溉时间窗：窗外只等待不告警（轮灌排程会把作业推到下一窗内）
+        if (!irrigationWindow.isAllowedNow(field)) {
+            report.addNote("field " + field.getId() + ": 当前不在灌溉时间窗内");
+            return;
+        }
+
         CropModel crop = cropModelRepository.findById(field.getCropCode()).orElse(null);
         if (crop == null) {
             log.warn("field {} references missing crop model {}", field.getId(), field.getCropCode());
@@ -220,6 +249,17 @@ public class ControlEngine {
         if (Double.isNaN(snap.getMoistureAvg())) {
             report.addNote("field " + field.getId() + ": 无有效墒情数据，跳过评估");
             return;
+        }
+
+        // 土壤湿度低于策略下限 → 墒情告急（不阻止灌溉，提醒尽快灌水/排查传感器）
+        if (cfg.getMoistureLowerPct() != null
+                && snap.getMoistureAvg() <= cfg.getMoistureLowerPct().doubleValue()
+                && !alarmService.hasUnacknowledged(field.getId(), "WARN", "SOIL_MOISTURE_LOW")) {
+            alarmService.raise("WARN", "SOIL_MOISTURE_LOW", field.getValveCode(), field.getId(),
+                    "土壤湿度 " + round(snap.getMoistureAvg()) + "% 低于策略下限 "
+                            + cfg.getMoistureLowerPct() + "%，存在旱情风险",
+                    Map.of("moisture", snap.getMoistureAvg(),
+                            "lowerPct", cfg.getMoistureLowerPct().doubleValue()));
         }
 
         DecisionResult decision = decisionClient.decide(field, cfg, crop, snap);
@@ -267,6 +307,21 @@ public class ControlEngine {
         if (!Double.isNaN(snap.getMoistureAvg()) && snap.getMoistureAvg() >= hardMax) {
             failures.add("湿度 " + round(snap.getMoistureAvg()) + "% >= hardMax " + round(hardMax) + "%");
         }
+
+        // 安全联锁（任何模式）：主管道缺水（水压低）/ 施肥泵过载
+        if (cfg.getPressureMinKpa() != null && snap.getPressureKpa() != null
+                && snap.getPressureKpa() < cfg.getPressureMinKpa().doubleValue()) {
+            failures.add("主管道水压 " + round(snap.getPressureKpa()) + "kPa < 下限 "
+                    + cfg.getPressureMinKpa() + "kPa（缺水联锁）");
+        }
+        if (snap.isPumpOverload()
+                || (cfg.getPumpOverloadA() != null && snap.getPumpCurrentA() != null
+                        && snap.getPumpCurrentA() > cfg.getPumpOverloadA().doubleValue())) {
+            failures.add("施肥泵过载（电流 "
+                    + (snap.getPumpCurrentA() == null ? "?" : round(snap.getPumpCurrentA()))
+                    + "A），联锁禁开");
+        }
+
         if (alarmService.hasUnacknowledgedCritical(field.getId())) {
             failures.add("存在未确认 CRITICAL 告警");
         }
@@ -277,6 +332,9 @@ public class ControlEngine {
         }
 
         // AUTO-only agronomic / scheduling preconditions
+        // 气象联动条件（风速/气温/湿度/降雨）——策略约束，仅自动模式拦截
+        failures.addAll(weatherLinkage.evaluate(cfg, snap));
+
         if (decision.getThetaStart() != null && !Double.isNaN(snap.getMoistureAvg())
                 && snap.getMoistureAvg() >= decision.getThetaStart()) {
             failures.add("湿度 " + round(snap.getMoistureAvg())
@@ -305,8 +363,21 @@ public class ControlEngine {
     public IrrigationJob startIrrigation(FieldEntity field, FieldConfig cfg, CropModel crop,
                                          FieldSnapshot snap, DecisionResult decision,
                                          String triggerType, CycleReport report) {
-        List<String> failures = checkOpenPreconditions(field, cfg, snap, decision,
+        return startIrrigation(field, cfg, crop, snap, decision, triggerType, report,
                 "MANUAL".equals(triggerType));
+    }
+
+    /**
+     * @param manualHardInterlocksOnly MANUAL OPEN skips agronomic preconditions;
+     *                                 AUTO/SCHEDULED enforce the full policy set.
+     */
+    @Transactional
+    public IrrigationJob startIrrigation(FieldEntity field, FieldConfig cfg, CropModel crop,
+                                         FieldSnapshot snap, DecisionResult decision,
+                                         String triggerType, CycleReport report,
+                                         boolean manualHardInterlocksOnly) {
+        List<String> failures = checkOpenPreconditions(field, cfg, snap, decision,
+                manualHardInterlocksOnly);
         if (!failures.isEmpty()) {
             String reason = String.join("; ", failures);
             log.info("field {} OPEN blocked by safety preconditions: {}", field.getId(), reason);
@@ -316,10 +387,10 @@ public class ControlEngine {
             if ("AUTO".equals(triggerType)) {
                 alarmService.raise("INFO", "IRRIGATION_BLOCKED", field.getValveCode(), field.getId(),
                         "自动开阀被安全前置拦截: " + reason, null);
+                return null;
             } else {
                 throw new SafetyBlockedException(reason);
             }
-            return null;
         }
 
         if (decision.getVolumeM3() == null || decision.getVolumeM3() <= 0) {
@@ -354,6 +425,7 @@ public class ControlEngine {
             gw = gatewayOf(job);
         }
         valveCommandService.sendOpen(job, gw, planned, cfg.getMaxDurationSec(), hardMax, sensorCode);
+        ledgerService.openForJob(job);
         log.info("field {} irrigation started job {} planned={}m3 mode={}",
                 field.getId(), job.getId(), planned, triggerType);
         if (report != null) {
@@ -374,6 +446,9 @@ public class ControlEngine {
             return;
         }
         FieldSnapshot snap = snapshotService.build(field, cfg);
+
+        // 注肥阶段控制（PRE_WATER 清水 / MID_RUN 注肥 / FLUSH 冲洗）
+        applyFertPlan(job, field, snap);
 
         DecisionThreshold thresholds = readThresholds(job, cfg, field);
         double moisture = snap.getMoistureAvg();
@@ -409,6 +484,69 @@ public class ControlEngine {
                     "作业进行中网关闭线，依赖边缘本地联锁关阀", Map.of("jobId", job.getId()));
         }
 
+        // stop condition: fertilizer pump overload -> CLOSE + stop pump + CRITICAL
+        if (snap.isPumpOverload()
+                || (cfg.getPumpOverloadA() != null && snap.getPumpCurrentA() != null
+                        && snap.getPumpCurrentA() > cfg.getPumpOverloadA().doubleValue())) {
+            alarmService.raise("CRITICAL", "INTERLOCK_PUMP_OVERLOAD",
+                    field.getFertPumpCode(), field.getId(),
+                    "施肥泵电机过载（电流 "
+                            + (snap.getPumpCurrentA() == null ? "?" : round(snap.getPumpCurrentA()))
+                            + "A），安全关阀停泵", Map.of("jobId", job.getId()));
+            deviceCommandService.stopPump(field, "PUMP_OVERLOAD");
+            requestClose(job, "INTERLOCK_PUMP_OVERLOAD");
+            note(report, "job " + job.getId() + " CLOSED: pump overload");
+            return;
+        }
+
+        // stop condition: main-line water pressure low for longer than waterLostDelaySec
+        if (cfg.getPressureMinKpa() != null && snap.getPressureKpa() != null
+                && snap.getPressureKpa() < cfg.getPressureMinKpa().doubleValue()) {
+            Instant since = pressureLowSince.computeIfAbsent(job.getId(), k -> Instant.now());
+            long lowSec = Duration.between(since, Instant.now()).getSeconds();
+            if (lowSec >= cfg.getWaterLostDelaySec()) {
+                alarmService.raise("CRITICAL", "INTERLOCK_WATER_LOST", snap.getPressureDeviceCode(),
+                        field.getId(),
+                        "主管道水压 " + round(snap.getPressureKpa()) + "kPa 持续 " + lowSec
+                                + "s 低于下限 " + cfg.getPressureMinKpa() + "kPa，判定缺水，安全关阀停泵",
+                        Map.of("jobId", job.getId(), "pressureKpa", snap.getPressureKpa(),
+                                "thresholdKpa", cfg.getPressureMinKpa().doubleValue()));
+                if (field.getFertPumpCode() != null) {
+                    deviceCommandService.stopPump(field, "WATER_LOST");
+                }
+                requestClose(job, "INTERLOCK_WATER_LOST");
+                note(report, "job " + job.getId() + " CLOSED: water pressure low");
+                return;
+            }
+        } else {
+            pressureLowSince.remove(job.getId());
+        }
+
+        // stop condition: valve open but instant flow below minimum (burst/blockage), with grace period
+        long runningSec = Duration.between(job.getStartTime(), Instant.now()).getSeconds();
+        if (cfg.getFlowMinM3h() != null && snap.getInstantFlow() != null
+                && runningSec > FLOW_GRACE_SEC
+                && "OPEN".equalsIgnoreCase(snap.getValveState())
+                && snap.getInstantFlow() < cfg.getFlowMinM3h().doubleValue()) {
+            Instant since = flowLowSince.computeIfAbsent(job.getId(), k -> Instant.now());
+            long lowSec = Duration.between(since, Instant.now()).getSeconds();
+            if (lowSec >= cfg.getWaterLostDelaySec()) {
+                alarmService.raise("CRITICAL", "INTERLOCK_FLOW_LOW", snap.getFlowDeviceCode(),
+                        field.getId(),
+                        "阀门开启但瞬时流量 " + round(snap.getInstantFlow()) + "m³/h 持续 " + lowSec
+                                + "s 低于下限 " + cfg.getFlowMinM3h() + "m³/h（爆管/堵塞/缺水），安全关阀",
+                        Map.of("jobId", job.getId(), "instantFlow", snap.getInstantFlow()));
+                if (field.getFertPumpCode() != null) {
+                    deviceCommandService.stopPump(field, "FLOW_LOW");
+                }
+                requestClose(job, "INTERLOCK_FLOW_LOW");
+                note(report, "job " + job.getId() + " CLOSED: flow low");
+                return;
+            }
+        } else {
+            flowLowSince.remove(job.getId());
+        }
+
         // stop condition 1: cumulative flow >= planned volume
         Double applied = latestAppliedVolume(job, snap);
         if (applied != null && job.getPlannedM3() != null
@@ -420,7 +558,6 @@ public class ControlEngine {
         }
 
         // stop condition 2: duration limit
-        long runningSec = Duration.between(job.getStartTime(), Instant.now()).getSeconds();
         if (cfg.getMaxDurationSec() != null && runningSec >= cfg.getMaxDurationSec()) {
             log.info("job {} duration limit reached ({}s)", job.getId(), runningSec);
             requestClose(job, "DURATION_LIMIT");
@@ -444,7 +581,11 @@ public class ControlEngine {
             job.setStopReason("INTERLOCK_VALVE_FAULT");
             job.setEndTime(Instant.now());
             job.setDurationSec((int) runningSec);
+            if (field.getFertPumpCode() != null) {
+                deviceCommandService.stopPump(field, "VALVE_FAULT");
+            }
             jobRepository.save(job);
+            ledgerService.settleForJob(job);
             alarmService.raise("CRITICAL", "INTERLOCK_VALVE_FAULT", job.getValveCode(),
                     field.getId(), "阀门故障，作业中止", Map.of("jobId", job.getId()));
         }
@@ -453,6 +594,11 @@ public class ControlEngine {
     /** Cloud-initiated CLOSE (idempotent command). Job settles when CLOSED status arrives. */
     @Transactional
     public void requestClose(IrrigationJob job, String reason) {
+        // 关阀先停注肥泵（任何云端主动关阀路径）
+        FieldEntity field = fieldRepository.findById(job.getFieldId()).orElse(null);
+        if (field != null && field.getFertPumpCode() != null) {
+            deviceCommandService.stopPump(field, reason);
+        }
         // avoid duplicate CLOSE commands: a CLOSE command already ACKed/closing
         Optional<ValveCommand> lastClose =
                 commandRepository.findFirstByJobIdAndCommandOrderByCreatedAtDesc(job.getId(), "CLOSE");
@@ -464,6 +610,132 @@ public class ControlEngine {
             }
         }
         valveCommandService.sendClose(job, reason);
+    }
+
+    // ------------------------------------------------------------------
+    // Fertigation phase control (PRE_WATER / MID_RUN / FLUSH)
+    // ------------------------------------------------------------------
+
+    /**
+     * 按 field.fertPlan 的 durationFraction 时间比例切换注肥泵；
+     * 未配置阶段但 injectRatioPct>0 时整段注肥。仅在阶段迁移时下发一次指令。
+     */
+    private void applyFertPlan(IrrigationJob job, FieldEntity field, FieldSnapshot snap) {
+        if (field.getFertPumpCode() == null || field.getFertPumpCode().isBlank()) {
+            return;
+        }
+        // 阀门未确认 OPEN 前不启泵
+        if (!"OPEN".equalsIgnoreCase(snap.getValveState())) {
+            return;
+        }
+
+        List<FertPhase> phases = parseFertPlan(field.getFertPlan());
+        String target;
+        double ratioPct;
+        if (phases.isEmpty()) {
+            ratioPct = nz(field.getInjectRatioPct());
+            target = ratioPct > 0 ? "MID_RUN" : "PRE_WATER";
+        } else {
+            FertPhase current = phaseAt(phases, elapsedFraction(job));
+            target = current.phase;
+            ratioPct = current.ratioPct;
+        }
+
+        String prev = fertPhaseByJob.get(job.getId());
+        if (target.equals(prev)) {
+            return;
+        }
+        fertPhaseByJob.put(job.getId(), target);
+
+        if ("MID_RUN".equals(target) && ratioPct > 0) {
+            Integer opening = pumpOpeningForRatio(field, ratioPct, snap);
+            deviceCommandService.startPump(field, opening, job.getId());
+            log.info("job {} 进入注肥阶段 {} ratio={}% opening={}", job.getId(), target, ratioPct, opening);
+        } else {
+            deviceCommandService.stopPump(field, "PHASE_" + target);
+            log.info("job {} 进入清水阶段 {}", job.getId(), target);
+        }
+    }
+
+    /** elapsed / planned duration fraction，缺省按 maxDurationSec 估算。 */
+    private double elapsedFraction(IrrigationJob job) {
+        long elapsed = Duration.between(job.getStartTime(), Instant.now()).getSeconds();
+        Long plannedSec = plannedDurationSec(job);
+        if (plannedSec == null || plannedSec <= 0) {
+            return 0d;
+        }
+        return Math.min(1d, Math.max(0d, (double) elapsed / plannedSec));
+    }
+
+    private Long plannedDurationSec(IrrigationJob job) {
+        if (job.getDecision() != null) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode n = objectMapper.readTree(job.getDecision());
+                com.fasterxml.jackson.databind.JsonNode d = n.get("durationSec");
+                if (d != null && d.isNumber() && d.asLong() > 0) {
+                    return d.asLong();
+                }
+            } catch (Exception ignored) {
+                // fall through
+            }
+        }
+        return null;
+    }
+
+    private FertPhase phaseAt(List<FertPhase> phases, double fraction) {
+        double acc = 0;
+        for (FertPhase p : phases) {
+            acc += Math.max(0d, p.durationFraction);
+            if (fraction < acc - 1e-9) {
+                return p;
+            }
+        }
+        return phases.get(phases.size() - 1);
+    }
+
+    private List<FertPhase> parseFertPlan(String json) {
+        List<FertPhase> out = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return out;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode arr = objectMapper.readTree(json);
+            if (arr.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode n : arr) {
+                    FertPhase p = new FertPhase();
+                    p.phase = n.path("phase").asText("");
+                    p.ratioPct = n.path("ratioPct").asDouble(0d);
+                    p.durationFraction = n.path("durationFraction").asDouble(0d);
+                    if (!p.phase.isBlank()) {
+                        out.add(p);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("bad fertPlan json: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /**
+     * 注肥泵开度：按灌区总流量 L/h 与泵额定流量 capacityLph 折算
+     * opening = 注肥比% × 水流量 / 泵额定流量（缺流量信息时全开，由网关比例注入）。
+     */
+    private Integer pumpOpeningForRatio(FieldEntity field, double ratioPct, FieldSnapshot snap) {
+        double waterLph = field.getEmitterTotalLph() == null
+                ? 0d : field.getEmitterTotalLph().doubleValue();
+        double capacityLph = deviceCommandService.pumpCapacityLph(field.getFertPumpCode());
+        if (waterLph <= 0 || capacityLph <= 0) {
+            return 100;
+        }
+        int opening = (int) Math.round(ratioPct / 100d * waterLph / capacityLph * 100d);
+        return Math.max(1, Math.min(100, opening));
+    }
+
+    private static class FertPhase {
+        String phase;
+        double ratioPct;
+        double durationFraction;
     }
 
     // ------------------------------------------------------------------
@@ -527,6 +799,17 @@ public class ControlEngine {
 
     @Transactional
     public IrrigationJob manualOpen(Long fieldId, Double volumeM3) {
+        return forceOpen(fieldId, volumeM3, "MANUAL", true);
+    }
+
+    /** 轮灌计划到点释放：受全部策略与安全前置约束；被拦截时抛出原因供调度器标记。 */
+    @Transactional
+    public IrrigationJob scheduledOpen(Long fieldId, Double volumeM3) {
+        return forceOpen(fieldId, volumeM3, "SCHEDULED", false);
+    }
+
+    private IrrigationJob forceOpen(Long fieldId, Double volumeM3, String triggerType,
+                                    boolean manualHardInterlocksOnly) {
         FieldEntity field = fieldRepository.findById(fieldId)
                 .orElseThrow(() -> new IllegalArgumentException("field not found: " + fieldId));
         FieldConfig cfg = configRepository.findById(fieldId)
@@ -553,9 +836,10 @@ public class ControlEngine {
             }
         }
         if (decision.getVolumeM3() == null || decision.getVolumeM3() <= 0) {
-            throw SafetyBlockedException.of("手动开阀缺少有效灌量（decision volume 为空，且未指定 volumeM3）");
+            throw SafetyBlockedException.of(triggerType + " 开阀缺少有效灌量（decision volume 为空，且未指定 volumeM3）");
         }
-        return startIrrigation(field, cfg, crop, snap, decision, "MANUAL", null);
+        return startIrrigation(field, cfg, crop, snap, decision, triggerType, null,
+                manualHardInterlocksOnly);
     }
 
     @Transactional

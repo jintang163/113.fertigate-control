@@ -88,6 +88,22 @@ public class GatewayConfigService {
         interlocks.put("phHigh",
                 src == null ? null : pick(src.getPhHigh(),
                         template == null ? null : template.getPhMax()));
+        interlocks.put("pressureMinKpa",
+                src == null ? null : pick(src.getPressureMinKpa(),
+                        template == null ? null : template.getPressureMinKpa()));
+        interlocks.put("flowMinM3h",
+                src == null ? null : pick(src.getFlowMinM3h(),
+                        template == null ? null : template.getFlowMinM3h()));
+        interlocks.put("waterLostDelaySec",
+                src == null || src.getWaterLostDelaySec() == null
+                        ? (template == null ? 15 : template.getWaterLostDelaySec())
+                        : src.getWaterLostDelaySec());
+        interlocks.put("pumpOverloadA",
+                src == null ? null : pick(src.getPumpOverloadA(),
+                        template == null ? null : template.getPumpOverloadA()));
+        if (src != null && src.getCommLostSec() != null) {
+            interlocks.put("commLostSec", src.getCommLostSec());
+        }
         envelope.put("interlocks", interlocks);
 
         String json;

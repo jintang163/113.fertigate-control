@@ -56,6 +56,8 @@ public class SnapshotService {
         List<String> soilCodes = fieldSensorRepository.findDeviceCodesByFieldIdAndRole(field.getId(), "SOIL");
         List<String> flowCodes = fieldSensorRepository.findDeviceCodesByFieldIdAndRole(field.getId(), "FLOW");
         List<String> weatherCodes = fieldSensorRepository.findDeviceCodesByFieldIdAndRole(field.getId(), "WEATHER");
+        List<String> pressureCodes = fieldSensorRepository.findDeviceCodesByFieldIdAndRole(field.getId(), "PRESSURE");
+        List<String> pumpCodes = fieldSensorRepository.findDeviceCodesByFieldIdAndRole(field.getId(), "PUMP");
 
         List<Double> moistures = new ArrayList<>();
         String primarySoil = null;
@@ -126,6 +128,14 @@ public class SnapshotService {
                 // is expected from the gateway; we accumulate by trusting the reported value)
                 snap.setRainfallToday(snap.getRainfallToday() + Math.max(0d, rain));
             }
+            double humidity = firstDouble(values, "airHumidity", "humidity");
+            if (!Double.isNaN(humidity)) {
+                snap.setAirHumidity(humidity);
+            }
+            double wind = firstDouble(values, "windSpeed", "wind");
+            if (!Double.isNaN(wind)) {
+                snap.setWindSpeed(wind);
+            }
             snap.setWeatherTs(latest.getTs());
         }
 
@@ -146,6 +156,55 @@ public class SnapshotService {
             }
             snap.setFlowDeviceCode(code);
             snap.setFlowTs(latest.getTs());
+        }
+
+        // pressure sensor (PRESSURE role, or embedded pressure values in any sensor latest)
+        for (String code : pressureCodes) {
+            SensorLatest latest = sensorLatestRepository.findById(code).orElse(null);
+            if (latest == null) {
+                continue;
+            }
+            JsonNode payload = readPayload(latest);
+            JsonNode values = payload == null ? null : payload.get("values");
+            double pressure = firstDouble(values, "pressure", "waterPressure");
+            if (!Double.isNaN(pressure)) {
+                snap.setPressureKpa(pressure);
+                snap.setPressureDeviceCode(code);
+            }
+        }
+
+        // fertilizer pump latest state (device/status → sensor_latest kind=device)
+        String pumpCode = field.getFertPumpCode();
+        if (pumpCode != null && !pumpCode.isBlank()) {
+            SensorLatest pumpLatest = sensorLatestRepository.findById(pumpCode).orElse(null);
+            if (pumpLatest != null) {
+                JsonNode payload = readPayload(pumpLatest);
+                JsonNode values = payload == null ? null : payload.get("values");
+                snap.setPumpState(pumpLatest.getState());
+                double opening = firstDouble(values, "opening");
+                if (!Double.isNaN(opening)) {
+                    snap.setPumpOpening((int) opening);
+                }
+                double current = firstDouble(values, "motorCurrent");
+                if (!Double.isNaN(current)) {
+                    snap.setPumpCurrentA(current);
+                }
+                JsonNode overload = values == null ? null : values.get("overload");
+                if (overload != null && overload.isNumber()) {
+                    snap.setPumpOverload(overload.asDouble() >= 1d);
+                } else if (overload != null) {
+                    snap.setPumpOverload(overload.asBoolean(false));
+                }
+            }
+            Device pump = deviceRepository.findByCode(pumpCode).orElse(null);
+            if (pump != null) {
+                if (snap.getGatewaySn() == null) {
+                    snap.setGatewaySn(pump.getGatewaySn());
+                }
+                if (pump.getOpening() != null) {
+                    snap.setPumpOpening(pump.getOpening());
+                }
+            }
         }
 
         // valve state / online

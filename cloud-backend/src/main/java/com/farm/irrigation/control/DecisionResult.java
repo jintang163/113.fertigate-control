@@ -11,6 +11,7 @@ public class DecisionResult {
     private String stage;
     private Double thetaStart;
     private Double thetaTarget;
+    private Double moisture;
     private Double deficitMm;
     private Double volumeM3;
     private Integer durationSec;
@@ -28,6 +29,8 @@ public class DecisionResult {
     public void setThetaStart(Double thetaStart) { this.thetaStart = thetaStart; }
     public Double getThetaTarget() { return thetaTarget; }
     public void setThetaTarget(Double thetaTarget) { this.thetaTarget = thetaTarget; }
+    public Double getMoisture() { return moisture; }
+    public void setMoisture(Double moisture) { this.moisture = moisture; }
     public Double getDeficitMm() { return deficitMm; }
     public void setDeficitMm(Double deficitMm) { this.deficitMm = deficitMm; }
     public Double getVolumeM3() { return volumeM3; }

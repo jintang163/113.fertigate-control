@@ -115,7 +115,33 @@ hardMax 未触发、EC/pH 在窗口内、无未确认 CRITICAL 告警、距上�
 4. EC > ecHigh（3.0 mS/cm，防肥害烧根）→ 停止注肥；持续超限关阀 `INTERLOCK_EC_HIGH`
 5. pH 超出 [phLow, phHigh]（5.0–8.0）→ `INTERLOCK_PH_*`
 6. OPEN 命令自带兜底：plannedVolume/maxDurationSec/hardMaxMoisture，即使与云端失联也能自行关断。
-7. 网关重启后默认所有阀 CLOSED（继电器常闭设计），等待云端状态同步，不记忆“开”。
+7. 网关重启后默认所有阀 CLOSED、泵 STOPPED（继电器常闭设计），等待云端状态同步，不记忆“开”。
+8. **缺水联锁**：主管道水压 < `pressureMinKpa`（默认 80kPa）持续 `waterLostDelaySec`（默认 15s）
+   → `INTERLOCK_WATER_LOST` 关阀停泵；阀开且瞬时流量 < `flowMinM3h`（启动 30s 宽限后）持续超限
+   → `INTERLOCK_FLOW_LOW`（爆管/堵塞/缺水）关阀停泵。
+9. **施肥泵过载**：泵电流 > `pumpOverloadA`（默认 8A）或状态位过载 → `INTERLOCK_PUMP_OVERLOAD` 紧急停泵并关阀。
+10. **通信中断联锁**：与云端连接丢失超过 `commLostSec`（默认 300s，曾成功连接后才判定）
+    → `INTERLOCK_COMM_LOST` 本地紧急关闭全部阀门与施肥泵；OPEN 自带兜底参数保证即使立即失联也安全。
+
+## 5b. 云端安全联锁（边缘联锁的第二道防线）
+
+- 开阀前置（任何模式）：阀/网关在线、数据新鲜、湿度 < hardMax、**水压 ≥ pressureMinKpa**、
+  **泵未过载**、无未确认 CRITICAL 告警；
+  AUTO/SCHEDULED 另加：θ < θ_start、EC/pH 在窗口、最小间隔、气象联动（风速/气温/湿度/当日与预报降雨）、
+  灌区灌溉时窗（windowStart/End + 周位图）、同 field 无并发作业。
+- 运行监管：水压低/低流量（按 waterLostDelaySec 去抖，低流量 30s 启动宽限）、泵过载、
+  湿度硬上限、传感器失联、达量、超时、湿度达标、阀故障——任一触发即下发 CLOSE 并停注肥泵。
+- 轮灌计划项释放被前置拦截时标记 BLOCKED 并告警，不影响后续灌区排程。
+
+## 5c. 施肥泵与轮灌
+
+- 注肥泵走通用执行器通道 `device/command`（START/STOP/SET_OPENING + opening 0-100，幂等 commandId），
+  状态走 `device/status`（opening/motorCurrent/overload）。
+- 灌区 `fertPlan` 定义 PRE_WATER（清水）/ MID_RUN（注肥）/ FLUSH（冲洗）三阶段，
+  引擎按作业时长比例切换；泵开度按 `注肥比% × 水流量 / 泵额定流量(capacityLph)` 折算。
+- 分区轮灌：按优先级（小者优先）+ 墒情（越旱越优先）排序，串行排程（同主管同时只灌一个区），
+  各项 scheduledStart 自动落入本区灌溉时窗；作业 DONE 后自动释放下一区。
+- 每次作业结算自动写灌肥台账（WATER 必写；有注肥配置时追加 FERTIGATION，记录肥液量与执行方式）。
 
 ## 6. 时序与参数默认值
 

@@ -2,6 +2,7 @@ package com.farm.irrigation.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.farm.irrigation.control.DeviceCommandService;
 import com.farm.irrigation.control.ValveCommandService;
 import com.farm.irrigation.domain.FieldEntity;
 import com.farm.irrigation.domain.IrrigationJob;
@@ -31,19 +32,22 @@ public class EventService {
     private final DeviceService deviceService;
     private final ObjectMapper objectMapper;
     private final ValveCommandService valveCommandService;
+    private final DeviceCommandService deviceCommandService;
 
     public EventService(AlarmService alarmService,
                         FieldRepository fieldRepository,
                         IrrigationJobRepository jobRepository,
                         DeviceService deviceService,
                         ObjectMapper objectMapper,
-                        @Lazy ValveCommandService valveCommandService) {
+                        @Lazy ValveCommandService valveCommandService,
+                        @Lazy DeviceCommandService deviceCommandService) {
         this.alarmService = alarmService;
         this.fieldRepository = fieldRepository;
         this.jobRepository = jobRepository;
         this.deviceService = deviceService;
         this.objectMapper = objectMapper;
         this.valveCommandService = valveCommandService;
+        this.deviceCommandService = deviceCommandService;
     }
 
     @Transactional
@@ -81,8 +85,12 @@ public class EventService {
         List<IrrigationJob> running = jobRepository.findByStatusOrderByStartTimeDesc("RUNNING");
         for (IrrigationJob job : running) {
             if (valveCode.equals(job.getValveCode())) {
-                log.warn("CRITICAL event {} on valve {} of running job {} -> issuing safety CLOSE",
+                log.warn("CRITICAL event {} on valve {} of running job {} -> safety CLOSE + pump STOP",
                         reason, valveCode, job.getId());
+                FieldEntity field = fieldRepository.findById(job.getFieldId()).orElse(null);
+                if (field != null && field.getFertPumpCode() != null) {
+                    deviceCommandService.stopPump(field, "SAFETY_" + reason);
+                }
                 valveCommandService.sendClose(job, "SAFETY_" + reason);
                 return;
             }
