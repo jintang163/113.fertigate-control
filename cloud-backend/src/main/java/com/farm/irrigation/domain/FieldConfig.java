@@ -114,6 +114,10 @@ public class FieldConfig {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    /** 生长模型驱动：true 时由 Python 生长模型服务回调决策，云端定时评估跳过 */
+    @Column(name = "growth_model_enabled", nullable = false)
+    private boolean growthModelEnabled = false;
+
     @Column(name = "updated_at", insertable = false, updatable = false)
     private Instant updatedAt;
 
@@ -177,5 +181,7 @@ public class FieldConfig {
     public void setPumpOverloadA(BigDecimal pumpOverloadA) { this.pumpOverloadA = pumpOverloadA; }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public boolean isGrowthModelEnabled() { return growthModelEnabled; }
+    public void setGrowthModelEnabled(boolean growthModelEnabled) { this.growthModelEnabled = growthModelEnabled; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

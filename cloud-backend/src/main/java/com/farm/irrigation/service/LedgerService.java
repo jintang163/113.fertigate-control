@@ -35,11 +35,14 @@ public class LedgerService {
 
     private final IrrigationLedgerRepository ledgerRepository;
     private final FieldRepository fieldRepository;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public LedgerService(IrrigationLedgerRepository ledgerRepository,
-                         FieldRepository fieldRepository) {
+                         FieldRepository fieldRepository,
+                         com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.ledgerRepository = ledgerRepository;
         this.fieldRepository = fieldRepository;
+        this.objectMapper = objectMapper;
     }
 
     /** 作业开灌时开立 WATER 台账（幂等：已有未结算行则复用）。 */
@@ -82,17 +85,16 @@ public class LedgerService {
         water.setExecutionMode(modeOf(job.getTriggerType()));
         ledgerRepository.save(water);
 
-        // 注肥台账：有注肥泵且注肥比例 > 0
+        // 注肥台账：有注肥泵且注肥比例 > 0（生长模型作业以决策 JSON 中的覆盖值为准）
         FieldEntity field = fieldRepository.findById(job.getFieldId()).orElse(null);
+        double ratioPct = injectRatioForJob(job, field);
         boolean ferted = field != null && field.getFertPumpCode() != null
                 && !field.getFertPumpCode().isBlank()
-                && field.getInjectRatioPct() != null
-                && field.getInjectRatioPct().doubleValue() > 0
+                && ratioPct > 0
                 && applied.doubleValue() > 0;
         if (ferted) {
             boolean abortBeforeFert = "VALVE_ACK_TIMEOUT".equals(job.getStopReason());
             if (!abortBeforeFert) {
-                double ratioPct = field.getInjectRatioPct().doubleValue();
                 BigDecimal fertL = applied.multiply(BigDecimal.valueOf(1000d))
                         .multiply(BigDecimal.valueOf(ratioPct / 100d))
                         .setScale(3, RoundingMode.HALF_UP);
@@ -104,7 +106,7 @@ public class LedgerService {
                 fert.setEndTime(water.getEndTime());
                 fert.setWaterM3(applied);
                 fert.setFertilizerL(fertL);
-                fert.setInjectRatioPct(field.getInjectRatioPct());
+                fert.setInjectRatioPct(BigDecimal.valueOf(ratioPct));
                 fert.setExecutionMode(modeOf(job.getTriggerType()));
                 fert.setStopReason(job.getStopReason());
                 ledgerRepository.save(fert);
@@ -112,6 +114,22 @@ public class LedgerService {
                         job.getId(), applied, fertL, ratioPct);
             }
         }
+    }
+
+    /** 注肥比：生长模型作业决策 JSON 中的覆盖值（fertInjectRatioPct）优先，否则灌区默认。 */
+    private double injectRatioForJob(IrrigationJob job, FieldEntity field) {
+        if (job.getDecision() != null) {
+            try {
+                var n = objectMapper.readTree(job.getDecision()).get("fertInjectRatioPct");
+                if (n != null && n.isNumber() && n.asDouble() > 0) {
+                    return n.asDouble();
+                }
+            } catch (Exception ignored) {
+                // fall through：用灌区默认
+            }
+        }
+        return field != null && field.getInjectRatioPct() != null
+                ? field.getInjectRatioPct().doubleValue() : 0d;
     }
 
     /** 将作业台账关联到轮灌计划项。 */
@@ -187,6 +205,7 @@ public class LedgerService {
         return switch (triggerType.toUpperCase()) {
             case "AUTO" -> "AUTO";
             case "SCHEDULED" -> "SCHEDULED";
+            case "MODEL" -> "MODEL";
             case "SAFETY_OFF" -> "SAFETY";
             default -> "MANUAL";
         };

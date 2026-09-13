@@ -103,6 +103,7 @@ public class FieldService {
         m.put("waterLostDelaySec", c.getWaterLostDelaySec());
         m.put("pumpOverloadA", c.getPumpOverloadA());
         m.put("enabled", c.isEnabled());
+        m.put("growthModelEnabled", c.isGrowthModelEnabled());
         return m;
     }
 
@@ -243,6 +244,7 @@ public class FieldService {
         if (dto.getWetRatio() != null) cfg.setWetRatio(dto.getWetRatio());
         if (dto.getEfficiency() != null) cfg.setEfficiency(dto.getEfficiency());
         if (dto.getEnabled() != null) cfg.setEnabled(dto.getEnabled());
+        if (dto.getGrowthModelEnabled() != null) cfg.setGrowthModelEnabled(dto.getGrowthModelEnabled());
         if (dto.getWeatherLinked() != null) cfg.setWeatherLinked(dto.getWeatherLinked());
         if (dto.getWindMaxMs() != null) cfg.setWindMaxMs(dto.getWindMaxMs());
         if (dto.getTempMin() != null) cfg.setTempMin(dto.getTempMin());

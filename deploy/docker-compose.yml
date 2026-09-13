@@ -59,6 +59,17 @@ services:
     container_name: farm-decision
     ports:
       - "8000:8000"
+    environment:
+      # 生长模型服务：品种库落盘 + 回调 Spring Boot 执行
+      VARIETY_DB_PATH: /data/varieties.db
+      BACKEND_URL: http://cloud-backend:8080
+      GROWTH_SCHEDULER_ENABLED: "1"
+      GROWTH_EVAL_INTERVAL_SEC: "300"
+    volumes:
+      - varietydata:/data
+    depends_on:
+      cloud-backend:
+        condition: service_started
     restart: unless-stopped
 
   cloud-backend:
@@ -88,8 +99,8 @@ services:
         condition: service_healthy
       influxdb:
         condition: service_healthy
-      decision-service:
-        condition: service_started
+      # 注意：不依赖 decision-service —— 决策服务不可达时云端自动回退本地阈值计算
+      # （LOCAL_FALLBACK），且生长模型调度器需反向回调本服务，依赖成环会启动失败
     restart: unless-stopped
 
   web:
@@ -123,3 +134,4 @@ services:
 volumes:
   pgdata:
   influxdata:
+  varietydata:

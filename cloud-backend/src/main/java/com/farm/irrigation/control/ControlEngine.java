@@ -7,6 +7,7 @@ import com.farm.irrigation.domain.FieldConfig;
 import com.farm.irrigation.domain.FieldEntity;
 import com.farm.irrigation.domain.IrrigationJob;
 import com.farm.irrigation.domain.ValveCommand;
+import com.farm.irrigation.dto.GrowthCallbackRequest;
 import com.farm.irrigation.mqtt.TelemetryArrivedEvent;
 import com.farm.irrigation.repo.CropModelRepository;
 import com.farm.irrigation.repo.FieldConfigRepository;
@@ -52,6 +53,8 @@ public class ControlEngine {
     private final Map<Long, Instant> flowLowSince = new ConcurrentHashMap<>();
     /** 作业当前注肥阶段（PRE_WATER/MID_RUN/FLUSH），仅在状态迁移时下发泵指令。 */
     private final Map<Long, String> fertPhaseByJob = new ConcurrentHashMap<>();
+    /** 生长模型回调幂等键集合（单机有界：超 10000 清空重建）。 */
+    private final java.util.Set<String> processedDecisionIds = ConcurrentHashMap.newKeySet();
     /** 开阀后流量建立宽限（s），避免启动瞬间误判缺水。 */
     private static final long FLOW_GRACE_SEC = 30;
 
@@ -222,6 +225,11 @@ public class ControlEngine {
     // ------------------------------------------------------------------
 
     private void evaluateAutoField(FieldEntity field, FieldConfig cfg, CycleReport report) {
+        // 生长模型驱动的田块由 Python 生长模型服务回调触发，云端定时评估跳过，避免双重决策
+        if (cfg.isGrowthModelEnabled()) {
+            report.addNote("field " + field.getId() + ": 生长模型驱动，跳过云端定时评估");
+            return;
+        }
         Optional<IrrigationJob> running =
                 jobRepository.findFirstByFieldIdAndStatusOrderByStartTimeDesc(field.getId(), "RUNNING");
         if (running.isPresent()) {
@@ -633,7 +641,7 @@ public class ControlEngine {
         String target;
         double ratioPct;
         if (phases.isEmpty()) {
-            ratioPct = nz(field.getInjectRatioPct());
+            ratioPct = injectRatioForJob(job, field);
             target = ratioPct > 0 ? "MID_RUN" : "PRE_WATER";
         } else {
             FertPhase current = phaseAt(phases, elapsedFraction(job));
@@ -730,6 +738,22 @@ public class ControlEngine {
         }
         int opening = (int) Math.round(ratioPct / 100d * waterLph / capacityLph * 100d);
         return Math.max(1, Math.min(100, opening));
+    }
+
+    /** 注肥比：生长模型作业决策 JSON 中的覆盖值（fertInjectRatioPct）优先，否则灌区默认。 */
+    private double injectRatioForJob(IrrigationJob job, FieldEntity field) {
+        if (job.getDecision() != null) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode n =
+                        objectMapper.readTree(job.getDecision()).get("fertInjectRatioPct");
+                if (n != null && n.isNumber() && n.asDouble() > 0) {
+                    return n.asDouble();
+                }
+            } catch (Exception ignored) {
+                // fall through：用灌区默认
+            }
+        }
+        return nz(field.getInjectRatioPct());
     }
 
     private static class FertPhase {
@@ -873,6 +897,138 @@ public class ControlEngine {
     }
 
     // ------------------------------------------------------------------
+    // 生长模型回调（Python 生长模型服务 → POST /api/growth/callback）
+    // ------------------------------------------------------------------
+
+    /**
+     * 生长模型融合决策回调：校验田块开关 → 幂等去重 → 组装 DecisionResult
+     * （含施肥覆盖参数）→ 走全量安全前置执行（triggerType=MODEL）。
+     * 仅需施肥时按水肥一体生成最小清水段作业携带肥液。
+     */
+    @Transactional
+    public Map<String, Object> applyGrowthCallback(GrowthCallbackRequest req) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("decisionId", req.getDecisionId());
+
+        FieldEntity field = req.getFieldId() == null ? null
+                : fieldRepository.findById(req.getFieldId()).orElse(null);
+        if (field == null) {
+            result.put("accepted", false);
+            result.put("message", "field not found: " + req.getFieldId());
+            return result;
+        }
+        FieldConfig cfg = configRepository.findById(field.getId()).orElse(null);
+        if (cfg == null || !cfg.isGrowthModelEnabled()) {
+            result.put("accepted", false);
+            result.put("message", "田块未开启生长模型驱动（growthModelEnabled）");
+            return result;
+        }
+        // 幂等：同一 decisionId 只执行一次
+        if (req.getDecisionId() != null && !req.getDecisionId().isBlank()) {
+            if (processedDecisionIds.size() > 10000) {
+                processedDecisionIds.clear();
+            }
+            if (!processedDecisionIds.add(req.getDecisionId())) {
+                result.put("accepted", false);
+                result.put("duplicate", true);
+                result.put("message", "decisionId 已处理，忽略重复回调");
+                return result;
+            }
+        }
+
+        GrowthCallbackRequest.Irrigation irr = req.getIrrigation();
+        GrowthCallbackRequest.Fertigation fert = req.getFertigation();
+        boolean wantIrrigate = irr != null && "OPEN".equalsIgnoreCase(irr.getAction())
+                && irr.getVolumeM3() != null && irr.getVolumeM3() > 0;
+        boolean wantFert = fert != null && Boolean.TRUE.equals(fert.getShouldFertilize())
+                && fert.getFertilizerL() != null && fert.getFertilizerL() > 0;
+
+        if (!wantIrrigate && !wantFert) {
+            result.put("accepted", true);
+            result.put("action", "NONE");
+            result.put("message", "决策为保持（不灌溉/不施肥），无需执行");
+            return result;
+        }
+
+        DecisionResult decision = new DecisionResult();
+        decision.setDecision("IRRIGATE");
+        if (irr != null && irr.getReasons() != null) {
+            decision.getReasons().addAll(irr.getReasons());
+        }
+
+        Double fertRatioPct = null;
+        if (wantFert) {
+            if (field.getFertPumpCode() == null || field.getFertPumpCode().isBlank()) {
+                decision.getReasons().add("田块未配置注肥泵，施肥决策不执行");
+                wantFert = false;
+            } else {
+                fertRatioPct = fert.getInjectRatioPct();
+                if (fertRatioPct == null || fertRatioPct <= 0) {
+                    fertRatioPct = nz(field.getInjectRatioPct()) > 0
+                            ? nz(field.getInjectRatioPct()) : 1.0;
+                }
+                decision.setFertInjectRatioPct(fertRatioPct);
+                decision.setFertFertilizerL(fert.getFertilizerL());
+                decision.setFertNpkKg(fert.getNpkKg());
+                if (fert.getReasons() != null) {
+                    decision.getReasons().addAll(fert.getReasons());
+                }
+            }
+        }
+
+        double volumeM3;
+        Integer durationSec = null;
+        if (wantIrrigate) {
+            volumeM3 = irr.getVolumeM3();
+            durationSec = irr.getDurationSec();
+        } else {
+            // 水肥一体：仅需施肥时生成最小清水段携带肥液（注肥泵不能空转）
+            volumeM3 = round3(fert.getFertilizerL() / (fertRatioPct / 100d) / 1000d);
+            volumeM3 = Math.max(0.05, volumeM3);
+            decision.getReasons().add(String.format(
+                    "仅需施肥：水肥一体作业，清水 %.3fm³ 携带肥液 %.2fL（注肥比 %.2f%%）",
+                    volumeM3, fert.getFertilizerL(), fertRatioPct));
+        }
+        if (durationSec == null || durationSec <= 0) {
+            double emitterLph = field.getEmitterTotalLph() == null
+                    ? 0d : field.getEmitterTotalLph().doubleValue();
+            if (emitterLph > 0) {
+                durationSec = (int) Math.round(volumeM3 * 1000d / emitterLph * 3600d);
+            }
+        }
+        decision.setVolumeM3(volumeM3);
+        decision.setDurationSec(durationSec);
+
+        CropModel crop = cropModelRepository.findById(field.getCropCode()).orElse(null);
+        FieldSnapshot snap = snapshotService.build(field, cfg);
+        snap.setLatitude(props.getLatitude());
+
+        try {
+            IrrigationJob job = startIrrigation(field, cfg, crop, snap, decision,
+                    "MODEL", null, false);
+            if (job == null) {
+                result.put("accepted", false);
+                result.put("message", "灌量无效或被安全前置拦截");
+                return result;
+            }
+            result.put("accepted", true);
+            result.put("action", "IRRIGATE");
+            result.put("jobId", job.getId());
+            result.put("jobBizCode", job.getJobBizCode());
+            result.put("fertigation", wantFert);
+            log.info("growth callback accepted: field {} job {} decisionId={} fert={}",
+                    field.getId(), job.getId(), req.getDecisionId(), wantFert);
+            return result;
+        } catch (SafetyBlockedException e) {
+            alarmService.raise("INFO", "GROWTH_CALLBACK_BLOCKED", field.getValveCode(),
+                    field.getId(), "生长模型回调被安全前置拦截: " + e.getMessage(), null);
+            result.put("accepted", false);
+            result.put("message", "安全前置拦截: " + e.getMessage());
+            return result;
+        }
+    }
+
+    // ------------------------------------------------------------------
     // helpers
     // ------------------------------------------------------------------
 
@@ -991,6 +1147,10 @@ public class ControlEngine {
 
     private static double round(double v) {
         return BigDecimal.valueOf(v).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private static double round3(double v) {
+        return BigDecimal.valueOf(v).setScale(3, RoundingMode.HALF_UP).doubleValue();
     }
 
     private static void note(CycleReport r, String s) {

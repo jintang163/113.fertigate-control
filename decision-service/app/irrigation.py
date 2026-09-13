@@ -125,13 +125,33 @@ def decide(req: DecideRequest, now: Optional[dt.datetime] = None) -> Decision:
     reasons.append(f"湿度 {moisture}% ≤ 启动阈值 θ_start {theta_start}%（p={sp.p}, 生育期={sp.name}）")
     d_need = (theta_target - moisture) / 100.0 * sp.zr_mm * req.field.wetRatio / req.field.efficiency
     d_need = max(0.0, d_need)
+
+    # ---- 8b. 日需水曲线钳制（显式传入 dailyWaterNeedMm 时启用）：
+    # 单日累计灌水不超过 日需水×安全系数 − 当日已灌 − 当日有效降雨
+    clamp_reason = None
+    if req.crop.dailyWaterNeedMm is not None:
+        cap_mm = (req.crop.dailyWaterNeedMm * req.field.dailyNeedCapFactor
+                  - w.irrigatedTodayMm - w.rainfallToday * 0.8)
+        if cap_mm <= 0:
+            base.decision = "HOLD"
+            reasons.append(
+                f"今日需水 {req.crop.dailyWaterNeedMm}mm 已满足"
+                f"（已灌 {w.irrigatedTodayMm}mm + 有效降雨 {round(w.rainfallToday * 0.8, 1)}mm），保持")
+            base.reasons = reasons
+            return base
+        if d_need > cap_mm:
+            reasons.append(
+                f"需补水深 {round(d_need, 2)}mm 超当日需水余量 {round(cap_mm, 2)}mm"
+                f"（曲线 {req.crop.dailyWaterNeedMm}mm/d × {req.field.dailyNeedCapFactor}），按曲线钳制")
+            d_need = cap_mm
+            clamp_reason = "DAILY_NEED_CAP"
+
     volume = d_need / 1000.0 * req.field.areaM2
     if req.field.emitterTotalLph <= 0:
         raise ValueError("emitterTotalLph 必须为正")
     duration_sec = int(round(volume * 1000.0 / req.field.emitterTotalLph * 3600.0))
 
     # 单次最大时长削顶（少量多次），超出则本轮灌到上限，下轮继续
-    clamp_reason = None
     if duration_sec > lim.maxDurationSec:
         ratio = lim.maxDurationSec / duration_sec
         duration_sec = lim.maxDurationSec

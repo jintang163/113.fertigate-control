@@ -18,6 +18,12 @@ public class DecisionResult {
     private String clampReason;
     private Double et0MmDay;
     private Double etcMmDay;
+    /** 生长模型施肥决策：本作业注肥比 %（覆盖灌区默认 injectRatioPct，null 不覆盖） */
+    private Double fertInjectRatioPct;
+    /** 生长模型施肥决策：计划肥液量 L（展示/对账用） */
+    private Double fertFertilizerL;
+    /** 生长模型施肥决策：N/P/K 纯养分量 kg {"n":..,"p":..,"k":..} */
+    private java.util.Map<String, Double> fertNpkKg;
     private final java.util.List<String> reasons = new java.util.ArrayList<>();
     private boolean fallback;
 
@@ -43,6 +49,12 @@ public class DecisionResult {
     public void setEt0MmDay(Double et0MmDay) { this.et0MmDay = et0MmDay; }
     public Double getEtcMmDay() { return etcMmDay; }
     public void setEtcMmDay(Double etcMmDay) { this.etcMmDay = etcMmDay; }
+    public Double getFertInjectRatioPct() { return fertInjectRatioPct; }
+    public void setFertInjectRatioPct(Double fertInjectRatioPct) { this.fertInjectRatioPct = fertInjectRatioPct; }
+    public Double getFertFertilizerL() { return fertFertilizerL; }
+    public void setFertFertilizerL(Double fertFertilizerL) { this.fertFertilizerL = fertFertilizerL; }
+    public java.util.Map<String, Double> getFertNpkKg() { return fertNpkKg; }
+    public void setFertNpkKg(java.util.Map<String, Double> fertNpkKg) { this.fertNpkKg = fertNpkKg; }
     public java.util.List<String> getReasons() { return reasons; }
     public boolean isFallback() { return fallback; }
     public void setFallback(boolean fallback) { this.fallback = fallback; }

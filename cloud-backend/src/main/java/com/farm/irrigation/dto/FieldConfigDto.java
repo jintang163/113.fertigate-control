@@ -22,6 +22,8 @@ public class FieldConfigDto {
     private BigDecimal wetRatio;
     private BigDecimal efficiency;
     private Boolean enabled;
+    /** 生长模型驱动：true 时由 Python 生长模型服务回调决策 */
+    private Boolean growthModelEnabled;
 
     // ---- 气象联动 ----
     private Boolean weatherLinked;
@@ -73,6 +75,8 @@ public class FieldConfigDto {
     public void setEfficiency(BigDecimal efficiency) { this.efficiency = efficiency; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
+    public Boolean getGrowthModelEnabled() { return growthModelEnabled; }
+    public void setGrowthModelEnabled(Boolean growthModelEnabled) { this.growthModelEnabled = growthModelEnabled; }
     public Boolean getWeatherLinked() { return weatherLinked; }
     public void setWeatherLinked(Boolean weatherLinked) { this.weatherLinked = weatherLinked; }
     public BigDecimal getWindMaxMs() { return windMaxMs; }

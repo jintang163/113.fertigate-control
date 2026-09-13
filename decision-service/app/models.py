@@ -22,6 +22,8 @@ class Crop(BaseModel):
     code: str
     stages: List[CropStage]
     daysAfterSowing: int = 0
+    # 日需水曲线值 mm/day（品种库/曲线服务给出）；缺省时不做日需水钳制
+    dailyWaterNeedMm: Optional[float] = None
 
 
 class SoilZone(BaseModel):
@@ -42,6 +44,7 @@ class Weather(BaseModel):
     tMin: Optional[float] = None
     rainfallToday: float = 0.0
     rainForecastMm: List[float] = Field(default_factory=list)
+    irrigatedTodayMm: float = 0.0                   # 当日已灌水量 mm（日需水钳制用）
     latitude: float = 34.5
     dayOfYear: Optional[int] = None                 # 缺省取服务当天
 
@@ -54,6 +57,7 @@ class FieldInfo(BaseModel):
     irrigationMode: str = "DRIP"
     rainSkipMm: float = 5.0
     targetOffsetPct: float = 1.0                    # 滴灌灌至 θfc-offset，防深层渗漏
+    dailyNeedCapFactor: float = 1.2                 # 日需水钳制安全系数（单日不超 需水×系数）
 
 
 class Limits(BaseModel):

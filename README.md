@@ -8,7 +8,7 @@
 | 目录 | 组件 | 技术栈 | 状态 |
 |---|---|---|---|
 | `edge-gateway/` | 边缘网关：Modbus/RS485 采集、断网缓存补传、本地联锁 | Python 3.11 / pymodbus / paho-mqtt / SQLite | ✅ 14 测试通过 |
-| `decision-service/` | 作物模型决策：FAO-56 动态阈值、灌量时长、ET0、降雨跳过 | Python / FastAPI | ✅ 13 测试通过 |
+| `decision-service/` | 作物模型决策 + **生长模型服务**：FAO-56 动态阈值、灌量时长、ET0、降雨跳过、品种/生育期管理、需水需肥曲线、水肥融合决策回调 | Python / FastAPI / SQLite | ✅ 35 测试通过 |
 | `cloud-backend/` | 云端：MQTT 接入、控制引擎状态机、REST、时序/关系持久化 | Java 17 / Spring Boot 3 / JPA / InfluxDB Client | ✅ 完整实现 |
 | `web/` | PC 前端：仪表盘、阀控、阈值曲线、作物模型、告警 | Vue3 + TS + Vite + Ant Design Vue 4 + ECharts | ✅ build 通过 |
 | `deploy/` | EMQX / PostgreSQL / InfluxDB 全栈编排 | docker compose | ✅ |
@@ -36,7 +36,8 @@ else 保持（HOLD）/ 雨养跳过（SKIP）/ 禁止（FORBID）
 | 手动/自动 | 田块级 AUTO/MANUAL 切换；阀控 + **施肥泵启停/开度（device/command）**；轮灌 SCHEDULED 触发 |
 | 安全联锁 | 通信中断、湿度硬上限、传感器失联、阀故障、EC/pH 超限、**缺水（水压低/流量低）**、**泵过载** 自动停止并告警；云+边缘双重保护 |
 | 控制下发 | `valve/command`（电磁阀）+ `device/command`（施肥泵/调节阀，START/STOP/SET_OPENING 开度） |
-| 灌肥台账 | 每次灌水/施肥起止时间、水量、肥液量（按注肥比折算）、执行方式 AUTO/MANUAL/SCHEDULED/SAFETY、当日汇总 |
+| 灌肥台账 | 每次灌水/施肥起止时间、水量、肥液量（按注肥比折算）、执行方式 AUTO/MANUAL/SCHEDULED/MODEL/SAFETY、当日汇总 |
+| **生长模型（V4 新增）** | 作物品种与生育期管理（苗期/花期/结果期/成熟期）、按品种+生育期的日需水曲线（mm/day）与日需肥曲线（N/P/K kg/ha/day）、融合决策（墒情+需水曲线+阈值 → 灌溉开/关/时长；EC/pH+需肥曲线 → 是否施肥/施肥量）、决策回调 Spring Boot 执行（田块级 `growthModelEnabled` 开关，triggerType=MODEL，水肥一体作业） |
 
 完整规则（状态机、安全前置、边缘联锁）见 [`docs/control-logic.md`](docs/control-logic.md)。
 

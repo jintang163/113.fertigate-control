@@ -31,7 +31,8 @@
    ecMin, ecMax, phMin, phMax, rainSkipMm, wetRatio, efficiency, enabled,
    weatherLinked, windMaxMs, tempMin, tempMax, humidityMin,
    rainTodaySkipMm, forecastSkipMm, forecastDays,
-   pressureMinKpa, flowMinM3h, waterLostDelaySec, pumpOverloadA`
+   pressureMinKpa, flowMinM3h, waterLostDelaySec, pumpOverloadA,
+   growthModelEnabled(生长模型驱动，默认false)`
 - `GET /api/fields/{id}/stages` / `POST /api/fields/{id}/stages` / `DELETE /api/fields/{id}/stages/{rid}` —
   作物生育期记录：`{ stageCode, stageName, recordDate, note, operator }`；另有 `GET .../stages/current`
 - `GET /api/fields/{id}/status` — 实时状态：
@@ -64,13 +65,13 @@
 ## 作业
 - `GET /api/jobs?fieldId=&status=&page=&size=` — 分页：`{records,total,page,size}`
 - `GET /api/jobs/{id}` — 作业详情（决策依据、计划/实际水量、stopReason）
-- triggerType：`AUTO` 自动 / `MANUAL` 手动 / `SCHEDULED` 轮灌计划 / `SAFETY_OFF` 安全联锁
+- triggerType：`AUTO` 自动 / `MANUAL` 手动 / `SCHEDULED` 轮灌计划 / `MODEL` 生长模型回调 / `SAFETY_OFF` 安全联锁
 
 ## 灌肥台账
 - `GET /api/ledger?fieldId=&kind=WATER|FERTIGATION&page=&size=` — 分页
   记录：`{ id, fieldId, fieldName, cropVariety, jobId, planItemId, kind, startTime, endTime,
   waterM3, fertilizerL, fertilizerKg, fertilizerName, injectRatioPct,
-  executionMode: AUTO|MANUAL|SCHEDULED|SAFETY, stopReason }`
+  executionMode: AUTO|MANUAL|SCHEDULED|MODEL|SAFETY, stopReason }`
 - `GET /api/ledger/summary?date=YYYY-MM-DD` — 当日汇总 `{ date, waterM3, fertilizerL, fertilizerKg, events }`
 - 台账随作业自动开立/结算；灌区配置注肥泵与注肥比时，结算自动生成 FERTIGATION 行
   （肥液量 L = 水量m³ × 1000 × 注肥比%）
@@ -104,3 +105,52 @@
     "deficitMm":10.2,"volumeM3":2.27,"durationSec":3400,"clampReason":"DURATION_LIMIT",
     "et0MmDay":4.6,"etcMmDay":5.29,"reasons":["moisture 21.4% <= thetaStart 22.8%"] }
   ```
+  可选入参：`crop.dailyWaterNeedMm`（日需水曲线值，传入后单日灌量按 `日需水×dailyNeedCapFactor − 当日已灌 − 有效降雨` 钳制，余量不足时 HOLD）；`weather.irrigatedTodayMm`（当日已灌 mm）；`field.dailyNeedCapFactor`（默认 1.2）。
+
+## 生长模型服务（decision-service 内，Python :8000）
+
+作物品种与生育期管理、日需水/需肥曲线、水肥融合决策与回调执行。
+
+### 品种与生育期
+- `GET /api/varieties` / `POST /api/varieties` / `GET /api/varieties/{code}` / `PUT /api/varieties/{code}` / `DELETE /api/varieties/{code}`
+- 品种：`{ code, name, cropCode, stages:[...], updatedAt }`；内置番茄/黄瓜，SQLite 持久化
+- 生育期阶段（苗期 seedling / 花期 flowering / 结果期 fruiting / 成熟期 maturity）：
+  ```json
+  { "name":"fruiting","label":"结果期","startDay":61,"endDay":100,
+    "startKc":1.15,"endKc":1.15,"startP":0.45,"endP":0.4,"zrMm":700,
+    "waterMmDay":5.0,"nKgHaDay":2.0,"pKgHaDay":0.6,"kKgHaDay":3.0,
+    "ecMin":1.8,"ecMax":2.8,"phMin":5.5,"phMax":6.8 }
+  ```
+
+### 需水 / 需肥曲线
+- `GET /api/varieties/{code}/water-curve?et0=4.6&days=130` — 逐日 `{ day, stage, kc, etcMmDay }`；`et0` 缺省时用阶段基准 `waterMmDay`
+- `GET /api/varieties/{code}/fert-curve?days=130` — 逐日 `{ day, stage, nKgHaDay, pKgHaDay, kKgHaDay }`
+
+### 施肥融合决策
+- `POST /decide/fertigation`，请求：
+  ```json
+  { "varietyCode":"tomato","daysAfterSowing":75,"areaM2":2000,
+    "ec":1.2,"ph":6.0,"daysSinceLastFert":2.0,
+    "solutionNutrientKgPerL":0.3,"irrigationWaterM3":2.0,"maxInjectRatioPct":2.0 }
+  ```
+  响应：`{ decision:"FERTIGATE"|"HOLD"|"FORBID", stage, ecTarget, phTarget,
+  npkKg:{"n":..,"p":..,"k":..}, fertilizerL, injectRatioPct, reasons }`
+  判据：pH 出目标带 / EC 超上限 → FORBID；EC 充足 → HOLD；EC 低于下限 → FERTIGATE，
+  施肥量 = 日需量×面积×间隔天数×EC 亏缺系数(0.5~1.5)，按肥液浓度折 L。
+
+### 回调执行（生长模型 → Spring Boot）
+- 调度器每 `GROWTH_EVAL_INTERVAL_SEC`（默认 300s，`GROWTH_SCHEDULER_ENABLED=1` 启用）：
+  拉取 `GET /api/fields`（过滤 `config.growthModelEnabled=true`）+ `GET /api/fields/{id}/status`
+  → 融合决策 → 回调；`POST /growth/run-cycle` 可手动触发一轮。
+- `POST /api/growth/callback`（Spring Boot 接收端）：
+  ```json
+  { "decisionId":"uuid","fieldId":1,"decidedAt":"2026-09-13T08:00:00Z",
+    "irrigation":{"action":"OPEN","volumeM3":0.6,"durationSec":900,"reasons":[...]},
+    "fertigation":{"shouldFertilize":true,"fertilizerL":11.2,
+                   "npkKg":{"n":1.2,"p":0.36,"k":1.8},"injectRatioPct":0.56,"reasons":[...]} }
+  ```
+  响应 `{ accepted, action:"IRRIGATE"|"NONE", jobId?, duplicate?, message? }`。
+  - 田块需 `config.growthModelEnabled=true`（该田块云端定时评估自动跳过，避免双重决策）
+  - 执行走 `ControlEngine` 全量安全前置（triggerType=`MODEL`，台账 execution_mode 同步）
+  - 施肥按水肥一体执行：随灌溉作业注肥（作业级注肥比覆盖灌区默认值）；仅需施肥时生成最小清水段作业携带肥液
+  - `decisionId` 幂等：重复回调返回 `duplicate:true` 不重复执行
